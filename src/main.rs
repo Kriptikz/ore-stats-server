@@ -1,4 +1,4 @@
-use std::{env, time::Duration};
+use std::{env, sync::Arc, time::Duration};
 
 use anyhow::bail;
 use thiserror::Error;
@@ -10,10 +10,10 @@ use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterType};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize, Pubkey};
-use tokio::signal;
+use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, rpc::update_data_system};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -28,6 +28,7 @@ pub const ROUND_ADDRESS: Pubkey =
     Pubkey::new_from_array(ed25519::derive_program_address(&[ROUND], &PROGRAM_ID).0);
 
 pub mod app_state;
+pub mod rpc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -53,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         bail!("Failed to load treasury account data");
     };
 
+    // Sleep between RPC Calls
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     let board = if let Ok(board) = connection.get_account_data(&BOARD_ADDRESS).await {
@@ -100,11 +102,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let app_state = AppState {
-        treasury: treasury.into(),
-        board: board.into(),
-        round: round.into(),
-        miners,
+        treasury: Arc::new(RwLock::new(treasury.into())),
+        board: Arc::new(RwLock::new(board.into())),
+        round: Arc::new(RwLock::new(round.into())),
+        miners: Arc::new(RwLock::new(miners)),
     };
+
+
+    let s = app_state.clone();
+    update_data_system(connection, s).await;
+
+    let state = app_state.clone();
 
     let app = Router::new()
         .route("/", get(root))
@@ -114,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/miners", get(get_miners))
         // .route("/blocks", get(get_blocks))
         // .route("/market", get(get_market))
-        .with_state(app_state);
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await?;
@@ -144,26 +152,38 @@ async fn get_miners(
 ) -> Result<Json<Vec<AppMiner>>, AppError> {
     // let limit = p.limit.unwrap_or(50).max(1).min(1000);
     // let offset = p.offset.unwrap_or(0).max(0);
-    Ok(Json(state.miners))
+    let miners = state.miners.clone();
+    let miners = miners.read().await;
+    let miners = miners.clone();
+    Ok(Json(miners))
 }
 
 async fn get_treasury(
     State(state): State<AppState>,
 ) -> Result<Json<AppTreasury>, AppError> {
-    Ok(Json(state.treasury))
+    let r = state.treasury.clone();
+    let lock = r.read().await;
+    let data = lock.clone();
+    Ok(Json(data))
 }
 
 
 async fn get_board(
     State(state): State<AppState>,
 ) -> Result<Json<AppBoard>, AppError> {
-    Ok(Json(state.board))
+    let r = state.board.clone();
+    let lock = r.read().await;
+    let data = lock.clone();
+    Ok(Json(data))
 }
 
 async fn get_round(
     State(state): State<AppState>,
 ) -> Result<Json<AppRound>, AppError> {
-    Ok(Json(state.round))
+    let r = state.round.clone();
+    let lock = r.read().await;
+    let data = lock.clone();
+    Ok(Json(data))
 }
 
 #[derive(Error, Debug)]

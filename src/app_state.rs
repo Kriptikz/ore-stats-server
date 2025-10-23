@@ -1,12 +1,15 @@
+use std::sync::Arc;
+
 use ore_api::state::{Board, Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub treasury: AppTreasury,
-    pub board: AppBoard,
-    pub round: AppRound,
-    pub miners: Vec<AppMiner>,
+    pub treasury: Arc<RwLock<AppTreasury>>,
+    pub board: Arc<RwLock<AppBoard>>,
+    pub round: Arc<RwLock<AppRound>>,
+    pub miners: Arc<RwLock<Vec<AppMiner>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
