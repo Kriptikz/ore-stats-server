@@ -1,10 +1,10 @@
-use std::env;
+use std::{env, time::Duration};
 
 use anyhow::bail;
 use thiserror::Error;
 use axum::{extract::State, routing::get, Json, Router};
 use const_crypto::ed25519;
-use ore_api::{consts::{BOARD, ROUND, TREASURY_ADDRESS}, state::{Board, Miner, Round, Treasury}};
+use ore_api::{consts::{BOARD, ROUND, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use serde::{Deserialize, Serialize};
 use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterType};
@@ -53,6 +53,8 @@ async fn main() -> anyhow::Result<()> {
         bail!("Failed to load treasury account data");
     };
 
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     let board = if let Ok(board) = connection.get_account_data(&BOARD_ADDRESS).await {
         if let Ok(board) = Board::try_from_bytes(&board) {
             board.clone()
@@ -62,8 +64,9 @@ async fn main() -> anyhow::Result<()> {
     } else {
         bail!("Failed to load board account data");
     };
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let round = if let Ok(round) = connection.get_account_data(&ROUND_ADDRESS).await {
+    let round = if let Ok(round) = connection.get_account_data(&round_pda(board.round_id).0).await {
         if let Ok(round) = Round::try_from_bytes(&round) {
             round.clone()
         } else {
@@ -72,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         bail!("Failed to load round account data");
     };
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let mut miners = vec![];
     if let Ok(miners_data_raw) = connection.get_program_accounts_with_config(
@@ -112,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
         // .route("/market", get(get_market))
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await?;
 
     tracing::debug!("Listening on {}", listener.local_addr()?);
