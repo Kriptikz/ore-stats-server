@@ -141,8 +141,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/board", get(get_board))
         .route("/round", get(get_round))
         .route("/miners", get(get_miners))
-        // .route("/blocks", get(get_blocks))
-        // .route("/market", get(get_market))
+        .route("/deployments", get(get_deployments))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
