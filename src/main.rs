@@ -1,9 +1,9 @@
-use std::{env, str::FromStr, sync::Arc, time::Duration};
+use std::{env, str::FromStr, sync::Arc, time::{Duration, Instant}};
 
 use anyhow::{anyhow, bail};
 use sqlx::sqlite::SqliteConnectOptions;
 use thiserror::Error;
-use axum::{extract::{Query, State}, routing::get, Json, Router};
+use axum::{body::Body, extract::{Query, State}, http::{Request, Response, StatusCode}, middleware::{self, Next}, routing::get, Json, Router};
 use const_crypto::ed25519;
 use ore_api::{consts::{BOARD, ROUND, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use serde::{Deserialize, Serialize};
@@ -142,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/round", get(get_round))
         .route("/miners", get(get_miners))
         .route("/deployments", get(get_deployments))
+        .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
@@ -152,6 +153,22 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
 
     Ok(())
+}
+
+async fn log_request_time(
+    req: Request<Body>,
+    next: Next,
+) -> Result<Response<Body>, StatusCode> {
+    let start_time = Instant::now();
+    let method = req.method().to_string();
+    let uri = req.uri().to_string();
+
+    let response = next.run(req).await;
+
+    let duration = start_time.elapsed();
+    tracing::info!("Request: {} {} - Duration: {:?}", method, uri, duration);
+
+    Ok(response)
 }
 
 async fn root() -> &'static str {
