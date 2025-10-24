@@ -22,6 +22,8 @@ pub struct AppMiner {
 
     /// The miner's prospects in the current round.
     pub deployed: [u64; 25],
+    /// Total deployed (Sum of miners prospects)
+    pub total_deployed: u64,
 
     /// The cumulative amount of SOL deployed on each square prior to this miner's move.
     pub cumulative: [u64; 25],
@@ -59,9 +61,14 @@ pub struct AppMiner {
 
 impl From<Miner> for AppMiner {
     fn from(miner: Miner) -> Self {
+        let mut total = 0;
+        for m in miner.deployed.iter() {
+            total = total + m;
+        }
         AppMiner {
             authority: miner.authority.to_string(),
             deployed: miner.deployed,
+            total_deployed: total,
             cumulative: miner.cumulative,
             checkpoint_fee: miner.checkpoint_fee,
             checkpoint_id: miner.checkpoint_id,

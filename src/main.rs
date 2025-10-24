@@ -177,21 +177,44 @@ async fn root() -> &'static str {
 
 #[derive(Debug, Deserialize)]
 struct Pagination {
-    /// Max rows to return (default 50, max 1000)
     limit: Option<i64>,
-    /// Rows to skip (default 0)
     offset: Option<i64>,
+    order_by: Option<String>,
 }
 
 async fn get_miners(
     State(state): State<AppState>,
-    //Query(p): Query<Pagination>,
+    Query(p): Query<Pagination>,
 ) -> Result<Json<Vec<AppMiner>>, AppError> {
-    // let limit = p.limit.unwrap_or(50).max(1).min(1000);
-    // let offset = p.offset.unwrap_or(0).max(0);
+    let limit = p.limit.unwrap_or(100).max(1).min(1000) as usize;
+    let offset = p.offset.unwrap_or(0).max(0) as usize;
     let miners = state.miners.clone();
-    let miners = miners.read().await;
-    let miners = miners.clone();
+    let reader = miners.read().await;
+    let mut miners = reader.clone();
+    drop(reader);
+    if miners.len() > 0 {
+        match p.order_by {
+            Some(v) => {
+                if v.eq("unclaimed_sol") {
+                    miners.sort_by(|a, b| b.rewards_sol.partial_cmp(&a.rewards_sol).unwrap());
+                } else if v.eq("unclaimed_ore") {
+                    miners.sort_by(|a, b| b.rewards_ore.partial_cmp(&a.rewards_ore).unwrap());
+                } else if v.eq("refined_ore") {
+                    miners.sort_by(|a, b| b.refined_ore.partial_cmp(&a.refined_ore).unwrap());
+                } else if v.eq("total_deployed") {
+                    miners.sort_by(|a, b| b.total_deployed.partial_cmp(&a.total_deployed).unwrap());
+                } else if v.eq("round_id") {
+                    miners.sort_by(|a, b| b.round_id.partial_cmp(&a.round_id).unwrap());
+                }
+            },
+            None => {
+                // No ordering
+            }
+        }
+        let start = offset.min(miners.len() - 2);
+        let end = start + limit.min(miners.len() - 1 - start);
+        return Ok(Json(miners[start..end].to_vec()));
+    }
     Ok(Json(miners))
 }
 
