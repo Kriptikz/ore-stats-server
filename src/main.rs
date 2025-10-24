@@ -1,6 +1,6 @@
 use std::{env, sync::Arc, time::Duration};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use thiserror::Error;
 use axum::{extract::State, routing::get, Json, Router};
 use const_crypto::ed25519;
@@ -104,7 +104,8 @@ async fn main() -> anyhow::Result<()> {
     let app_state = AppState {
         treasury: Arc::new(RwLock::new(treasury.into())),
         board: Arc::new(RwLock::new(board.into())),
-        round: Arc::new(RwLock::new(round.into())),
+        staring_round: board.round_id,
+        rounds: Arc::new(RwLock::new(vec![])),
         miners: Arc::new(RwLock::new(miners)),
     };
 
@@ -180,10 +181,15 @@ async fn get_board(
 async fn get_round(
     State(state): State<AppState>,
 ) -> Result<Json<AppRound>, AppError> {
-    let r = state.round.clone();
+    let r = state.rounds.clone();
     let lock = r.read().await;
     let data = lock.clone();
-    Ok(Json(data))
+    drop(lock);
+    if let Some(d) = data.last() {
+        Ok(Json(d.clone()))
+    } else {
+        Err(anyhow!("Failed to get last round").into())
+    }
 }
 
 #[derive(Error, Debug)]

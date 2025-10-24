@@ -8,7 +8,8 @@ use tokio::sync::{Mutex, RwLock};
 pub struct AppState {
     pub treasury: Arc<RwLock<AppTreasury>>,
     pub board: Arc<RwLock<AppBoard>>,
-    pub round: Arc<RwLock<AppRound>>,
+    pub staring_round: u64,
+    pub rounds: Arc<RwLock<Vec<AppRound>>>,
     pub miners: Arc<RwLock<Vec<AppMiner>>>,
 }
 
