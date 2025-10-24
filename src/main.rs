@@ -1,8 +1,9 @@
-use std::{env, sync::Arc, time::Duration};
+use std::{env, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
+use sqlx::sqlite::SqliteConnectOptions;
 use thiserror::Error;
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{extract::{Query, State}, routing::get, Json, Router};
 use const_crypto::ed25519;
 use ore_api::{consts::{BOARD, ROUND, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use steel::{AccountDeserialize, Pubkey};
 use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, rpc::update_data_system};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment}, rpc::update_data_system};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -29,6 +30,7 @@ pub const ROUND_ADDRESS: Pubkey =
 
 pub mod app_state;
 pub mod rpc;
+pub mod database;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -39,6 +41,35 @@ async fn main() -> anyhow::Result<()> {
         .with(fmt::layer())
         .with(env_filter)
         .init();
+
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data/app.db".to_string());
+    if let Some(path) = db_url.strip_prefix("sqlite://") {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+    }
+
+    let db_connect_ops = SqliteConnectOptions::from_str(&db_url)?
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(10))
+        .foreign_keys(true);
+
+    let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .min_connections(2)
+        .max_connections(10)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_with(db_connect_ops)
+        .await?;
+
+
+    tracing::info!("Running migrations...");
+
+    sqlx::migrate!("./migrations").run(&db_pool).await?;
+
+    tracing::info!("Database migrations complete.");
+    tracing::info!("Database ready!");
 
     let rpc_url = env::var("RPC_URL").expect("RPC_URL must be set");
     let prefix = "https://".to_string();
@@ -65,17 +96,6 @@ async fn main() -> anyhow::Result<()> {
         }
     } else {
         bail!("Failed to load board account data");
-    };
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    let round = if let Ok(round) = connection.get_account_data(&round_pda(board.round_id).0).await {
-        if let Ok(round) = Round::try_from_bytes(&round) {
-            round.clone()
-        } else {
-            bail!("Failed to parse Round account");
-        }
-    } else {
-        bail!("Failed to load round account data");
     };
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -107,8 +127,8 @@ async fn main() -> anyhow::Result<()> {
         staring_round: board.round_id,
         rounds: Arc::new(RwLock::new(vec![])),
         miners: Arc::new(RwLock::new(miners)),
+        db_pool,
     };
-
 
     let s = app_state.clone();
     update_data_system(connection, s).await;
@@ -190,6 +210,19 @@ async fn get_round(
     } else {
         Err(anyhow!("Failed to get last round").into())
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct RoundId {
+    round_id: u64,
+}
+
+async fn get_deployments(
+    State(state): State<AppState>,
+    Query(p): Query<RoundId>,
+) -> Result<Json<Vec<CreateDeployment>>, AppError> {
+    let deployments = get_deployments_by_round(&state.db_pool, p.round_id as i64).await?;
+    Ok(Json(deployments))
 }
 
 #[derive(Error, Debug)]

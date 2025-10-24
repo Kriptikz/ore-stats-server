@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ore_api::state::{Board, Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
+use sqlx::{Pool, Sqlite};
 use tokio::sync::{Mutex, RwLock};
 
 #[derive(Clone)]
@@ -11,6 +12,7 @@ pub struct AppState {
     pub staring_round: u64,
     pub rounds: Arc<RwLock<Vec<AppRound>>>,
     pub miners: Arc<RwLock<Vec<AppMiner>>>,
+    pub db_pool: Pool<Sqlite>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
