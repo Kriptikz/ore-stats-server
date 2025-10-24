@@ -14,14 +14,14 @@ pub struct CreateDeployment {
     pub created_at: String, // RFC3339
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct RoundRow {
     pub id: i64,
-    pub slot_hash: [u8; 32],
+    pub slot_hash: Vec<u8>,
     pub expires_at: i64,
     pub motherlode: i64,
-    pub rent_payer: [u8; 32],
-    pub top_miner: [u8; 32],
+    pub rent_payer: String,
+    pub top_miner: String,
     pub top_miner_reward: i64,
     pub total_deployed: i64,
     pub total_vaulted: i64,
@@ -33,11 +33,11 @@ impl From<Round> for RoundRow {
     fn from(r: Round) -> Self {
         RoundRow {
             id: r.id as i64,
-            slot_hash: r.slot_hash,
+            slot_hash: r.slot_hash.to_vec(),
             expires_at: r.expires_at as i64,
             motherlode: r.motherlode as i64,
-            rent_payer: r.rent_payer.to_bytes(),
-            top_miner: r.top_miner.to_bytes(),
+            rent_payer: r.rent_payer.to_string(),
+            top_miner: r.top_miner.to_string(),
             top_miner_reward: r.top_miner_reward as i64,
             total_deployed: r.total_deployed as i64,
             total_vaulted: r.total_vaulted as i64,
@@ -72,8 +72,8 @@ pub async fn insert_round(pool: &Pool<Sqlite>, r: &RoundRow) -> Result<(), sqlx:
     .bind(r.slot_hash.as_slice())
     .bind(r.expires_at)
     .bind(r.motherlode)
-    .bind(r.rent_payer.as_slice())
-    .bind(r.top_miner.as_slice())
+    .bind(r.rent_payer.clone())
+    .bind(r.top_miner.clone())
     .bind(r.top_miner_reward)
     .bind(r.total_deployed)
     .bind(r.total_vaulted)
@@ -85,20 +85,21 @@ pub async fn insert_round(pool: &Pool<Sqlite>, r: &RoundRow) -> Result<(), sqlx:
     Ok(())
 }
 
-// pub async fn get_round(pool: &Pool<Sqlite>, round_id: u64) -> Result<RoundRow, sqlx::Error> {
-//     let round = sqlx::query_as::<_, RoundRow>(
-//         r#"
-//         SELECT * FROM rounds
-//         WHERE id = ?
-//         ORDER BY id DESC
-//         "#
-//     )
-//     .bind(round_id)
-//     .execute(pool)
-//     .await?;
+pub async fn get_rounds(pool: &Pool<Sqlite>, limit: i64, offset: i64) -> Result<Vec<RoundRow>, sqlx::Error> {
+    let rounds = sqlx::query_as::<_, RoundRow>(
+        r#"
+        SELECT * FROM rounds
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+        "#
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
 
-//     Ok(round)
-// }
+    Ok(rounds)
+}
 
 pub async fn insert_deployment(pool: &Pool<Sqlite>, d: &CreateDeployment) -> Result<(), sqlx::Error> {
     sqlx::query(
