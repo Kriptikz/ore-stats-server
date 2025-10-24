@@ -166,7 +166,7 @@ pub async fn get_deployments_by_round(
             sol_earned, ore_earned, unclaimed_ore, created_at
         FROM deployments
         WHERE round_id = ?
-        ORDER BY ore_earned ASC
+        ORDER BY ore_earned DESC
         "#
     )
     .bind(round_id)
