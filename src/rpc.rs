@@ -128,6 +128,8 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         miners_snapshot.round_id = round.id;
                         miners_snapshot.miners = miners.clone();
                         miners_snapshot.completed = false;
+                        miners.sort_by(|a, b| b.rewards_ore.partial_cmp(&a.rewards_ore).unwrap());
+
                         tracing::info!("Setting miners snapshot completed to false");
                         
                     } else {
