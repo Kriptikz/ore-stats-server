@@ -67,12 +67,6 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
             *l = board.into();
             drop(l);
 
-            if board.end_slot == u64::MAX {
-                tracing::info!("Waiting for first deployment");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                continue;
-            }
-
             let last_deployable_slot = board.end_slot;
             let current_slot = if let Ok(current_slot) = connection.get_slot().await {
                 current_slot
