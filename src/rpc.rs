@@ -1,11 +1,11 @@
 
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use ore_api::{consts::{SPLIT_ADDRESS, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterType};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
-use steel::{AccountDeserialize, Numeric};
+use steel::{AccountDeserialize, Numeric, Pubkey};
 
 use crate::{app_state::{AppMiner, AppState}, database::{insert_deployments, insert_round, CreateDeployment, RoundRow}, BOARD_ADDRESS};
 
@@ -148,7 +148,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                     tracing::info!("Performing snapshot and updating round");
                     // load previous round
                     let round_id = board.round_id - 1;
-                    let round = if let Ok(round) = connection.get_account_data(&round_pda(round_id).0).await {
+                    let mut round = if let Ok(round) = connection.get_account_data(&round_pda(round_id).0).await {
                         if let Ok(round) = Round::try_from_bytes(&round) {
                             round.clone()
                         } else {
@@ -162,16 +162,6 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         continue
                     };
 
-                    // update round
-                    let r = app_state.rounds.clone();
-                    let mut l = r.write().await;
-                    l.push(round.into());
-                    drop(l);
-
-                    // insert round
-                    if let Err(e) = insert_round(&db_pool, &RoundRow::from(round)).await {
-                        tracing::error!("Failed to insert round: {:?}", e);
-                    }
 
                     if round.slot_hash == [0; 32] {
                         tracing::error!("Round slot hash should not be 0's");
@@ -187,6 +177,16 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         *l = miners_snapshot.miners.clone();
                         drop(l);
                         miners_snapshot.completed = true;
+                        // update round
+                        let r = app_state.rounds.clone();
+                        let mut l = r.write().await;
+                        l.push(round.into());
+                        drop(l);
+
+                        // insert round
+                        if let Err(e) = insert_round(&db_pool, &RoundRow::from(round)).await {
+                            tracing::error!("Failed to insert round: {:?}", e);
+                        }
                         continue;
                     } else {
                         // process round data
@@ -261,8 +261,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                                                      let end = start.saturating_add(original);
                                                      if sample >= start && sample < end {
                                                          ore_earned_u64 = ore_earned_u64.saturating_add(round.top_miner_reward);
-                                                         // (On-chain sets round.top_miner = miner.authority here; we don't need
-                                                         // to mutate it off-chain to compute per-miner rewards.)
+                                                         round.top_miner = Pubkey::from_str(&miner.authority).unwrap();
                                                      }
                                                  }
 
@@ -308,6 +307,17 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         let mut l = r.write().await;
                         *l = miners_snapshot.miners.clone();
                         drop(l);
+
+                        // update round
+                        let r = app_state.rounds.clone();
+                        let mut l = r.write().await;
+                        l.push(round.into());
+                        drop(l);
+
+                        // insert round
+                        if let Err(e) = insert_round(&db_pool, &RoundRow::from(round)).await {
+                            tracing::error!("Failed to insert round: {:?}", e);
+                        }
                         miners_snapshot.completed = true;
                     }
                 }
