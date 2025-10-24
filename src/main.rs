@@ -186,7 +186,7 @@ async fn get_miners(
     State(state): State<AppState>,
     Query(p): Query<Pagination>,
 ) -> Result<Json<Vec<AppMiner>>, AppError> {
-    let limit = p.limit.unwrap_or(100).max(1).min(1000) as usize;
+    let limit = p.limit.unwrap_or(2500).max(1).min(2500) as usize;
     let offset = p.offset.unwrap_or(0).max(0) as usize;
     let miners = state.miners.clone();
     let reader = miners.read().await;
