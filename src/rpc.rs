@@ -301,6 +301,13 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                             tokio::time::sleep(Duration::from_secs(1)).await;
                             continue
                         }
+                        
+                        // Update miners
+                        let r = app_state.miners.clone();
+                        let mut l = r.write().await;
+                        *l = miners_snapshot.miners.clone();
+                        drop(l);
+                        miners_snapshot.completed = true;
                     }
                 }
 
