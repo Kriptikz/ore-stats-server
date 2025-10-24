@@ -137,7 +137,9 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                     board_snapshot = true;
                 }
             } else if slots_left_in_round > 0 {
+                tracing::info!("Checking board snapshot status: {}", miners_snapshot.completed);
                 if !miners_snapshot.completed {
+                    tracing::info!("Performing snapshot and updating round");
                     // load previous round
                     let round_id = board.round_id - 1;
                     let round = if let Ok(round) = connection.get_account_data(&round_pda(round_id).0).await {
