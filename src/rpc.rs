@@ -224,70 +224,71 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                             let top_sample = top_sample_opt; // same for all miners if not split
 
                             for miner in miners_snapshot.miners.iter() {
-                                 for (square_index, amount) in miner.deployed.iter().enumerate() {
-                                     if *amount == 0 {
-                                         continue;
-                                     }
+                                if miner.round_id == round.id {
+                                     for (square_index, amount) in miner.deployed.iter().enumerate() {
+                                         if *amount == 0 {
+                                             continue;
+                                         }
 
-                                     // Defaults for non-winning squares (or missing RNG)
-                                     let mut sol_earned_u64: u64 = 0;
-                                     let mut ore_earned_u64: u64 = 0;
+                                         // Defaults for non-winning squares (or missing RNG)
+                                         let mut sol_earned_u64: u64 = 0;
+                                         let mut ore_earned_u64: u64 = 0;
 
-                                     // Only compute rewards on the winning square and when we had RNG
-                                     if let Some(ws) = winning_square {
-                                         if square_index == ws && denom > 0 {
-                                             // ---- SOL rewards ----
-                                             // Base = original_deployment - admin_fee (admin_fee = max(1, original/100))
-                                             let original = *amount as u64;
-                                             let admin_fee = (original / 100).max(1);
-                                             let mut rewards_sol = original.saturating_sub(admin_fee);
+                                         // Only compute rewards on the winning square and when we had RNG
+                                         if let Some(ws) = winning_square {
+                                             if square_index == ws && denom > 0 {
+                                                 // ---- SOL rewards ----
+                                                 // Base = original_deployment - admin_fee (admin_fee = max(1, original/100))
+                                                 let original = *amount as u64;
+                                                 let admin_fee = (original / 100).max(1);
+                                                 let mut rewards_sol = original.saturating_sub(admin_fee);
 
-                                             // Pro-rata share of round.total_winnings
-                                             let share = ((total_winnings as u128 * original as u128) / denom as u128) as u64;
-                                             rewards_sol = rewards_sol.saturating_add(share);
+                                                 // Pro-rata share of round.total_winnings
+                                                 let share = ((total_winnings as u128 * original as u128) / denom as u128) as u64;
+                                                 rewards_sol = rewards_sol.saturating_add(share);
 
-                                             sol_earned_u64 = rewards_sol;
+                                                 sol_earned_u64 = rewards_sol;
 
-                                             // ---- ORE rewards ----
-                                             // Top miner reward: split evenly pro-rata if split, else winner-takes-all by sample
-                                             if is_split {
-                                                 let split_share = ((round.top_miner_reward as u128 * original as u128)
-                                                     / denom as u128) as u64;
-                                                 ore_earned_u64 = ore_earned_u64.saturating_add(split_share);
-                                             } else if let Some(sample) = top_sample {
-                                                 // Check if this miner's cumulative interval covers the sample
-                                                 let start = miner.cumulative[ws];
-                                                 let end = start.saturating_add(original);
-                                                 if sample >= start && sample < end {
-                                                     ore_earned_u64 = ore_earned_u64.saturating_add(round.top_miner_reward);
-                                                     // (On-chain sets round.top_miner = miner.authority here; we don't need
-                                                     // to mutate it off-chain to compute per-miner rewards.)
+                                                 // ---- ORE rewards ----
+                                                 // Top miner reward: split evenly pro-rata if split, else winner-takes-all by sample
+                                                 if is_split {
+                                                     let split_share = ((round.top_miner_reward as u128 * original as u128)
+                                                         / denom as u128) as u64;
+                                                     ore_earned_u64 = ore_earned_u64.saturating_add(split_share);
+                                                 } else if let Some(sample) = top_sample {
+                                                     // Check if this miner's cumulative interval covers the sample
+                                                     let start = miner.cumulative[ws];
+                                                     let end = start.saturating_add(original);
+                                                     if sample >= start && sample < end {
+                                                         ore_earned_u64 = ore_earned_u64.saturating_add(round.top_miner_reward);
+                                                         // (On-chain sets round.top_miner = miner.authority here; we don't need
+                                                         // to mutate it off-chain to compute per-miner rewards.)
+                                                     }
+                                                 }
+
+                                                 // Motherlode reward (if any)
+                                                 if motherlode_amt > 0 {
+                                                     let ml_share = ((motherlode_amt as u128 * original as u128)
+                                                         / denom as u128) as u64;
+                                                     ore_earned_u64 = ore_earned_u64.saturating_add(ml_share);
                                                  }
                                              }
-
-                                             // Motherlode reward (if any)
-                                             if motherlode_amt > 0 {
-                                                 let ml_share = ((motherlode_amt as u128 * original as u128)
-                                                     / denom as u128) as u64;
-                                                 ore_earned_u64 = ore_earned_u64.saturating_add(ml_share);
-                                             }
                                          }
+
+                                         let deployment = CreateDeployment {
+                                             round_id: miner.round_id as i64,
+                                             pubkey: miner.authority.to_string(),
+                                             square_id: square_index as i64,
+                                             amount: *amount as i64,
+                                             sol_earned: sol_earned_u64 as i64,
+                                             ore_earned: ore_earned_u64 as i64,
+                                             unclaimed_ore: miner.rewards_ore as i64,
+                                             created_at: chrono::Utc::now().to_rfc3339(),
+                                         };
+
+                                         deployments.push(deployment);
                                      }
-
-                                     let deployment = CreateDeployment {
-                                         round_id: miner.round_id as i64,
-                                         pubkey: miner.authority.to_string(),
-                                         square_id: square_index as i64,
-                                         amount: *amount as i64,
-                                         sol_earned: sol_earned_u64 as i64,
-                                         ore_earned: ore_earned_u64 as i64,
-                                         unclaimed_ore: miner.rewards_ore as i64,
-                                         created_at: chrono::Utc::now().to_rfc3339(),
-                                     };
-
-                                     deployments.push(deployment);
-                                 }
-
+                                }
 
                             }
 
