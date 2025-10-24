@@ -128,16 +128,19 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         miners_snapshot.round_id = round.id;
                         miners_snapshot.miners = miners.clone();
                         miners_snapshot.completed = false;
+                        tracing::info!("Setting miners snapshot completed to false");
                         
                     } else {
                         miners_snapshot.round_id = round.id;
                         miners_snapshot.miners = vec![];
                         miners_snapshot.completed = true;
+                        tracing::info!("Setting miners snapshot completed to true");
                     }
                     board_snapshot = true;
                 }
             } else if slots_left_in_round > 0 {
-                tracing::info!("Checking board snapshot status: {}", miners_snapshot.completed);
+                board_snapshot = false;
+                tracing::info!("Checking miner snapshot status: {}", miners_snapshot.completed);
                 if !miners_snapshot.completed {
                     tracing::info!("Performing snapshot and updating round");
                     // load previous round
@@ -266,6 +269,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                 println!("Sleeping until round is over in {} ms", sleep_time + 5000);
                 tokio::time::sleep(Duration::from_millis(sleep_time)).await;
             } else {
+                board_snapshot = false;
                 println!("Sleeping for 5 seconds");
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
