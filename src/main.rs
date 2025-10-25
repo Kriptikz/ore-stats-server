@@ -264,7 +264,7 @@ async fn get_rounds(
     State(state): State<AppState>,
     Query(p): Query<RoundsPagination>,
 ) -> Result<Json<Vec<RoundRow>>, AppError> {
-    let limit = p.limit.unwrap_or(100).max(1).min(1000);
+    let limit = p.limit.unwrap_or(100).max(1).min(2000);
     let offset = p.offset.unwrap_or(0).max(0);
     let rounds = database::get_rounds(&state.db_pool, limit, offset).await?;
     Ok(Json(rounds))
@@ -274,7 +274,7 @@ async fn get_treasuries(
     State(state): State<AppState>,
     Query(p): Query<RoundsPagination>,
 ) -> Result<Json<Vec<DbTreasury>>, AppError> {
-    let limit = p.limit.unwrap_or(100).max(1).min(1000);
+    let limit = p.limit.unwrap_or(2000).max(1).min(2000);
     let offset = p.offset.unwrap_or(0).max(0);
     let treasuries = database::get_treasuries(&state.db_pool, limit, offset).await?;
     Ok(Json(treasuries))
@@ -285,7 +285,7 @@ async fn get_miner_history(
     Path(pubkey): Path<String>,
     Query(p): Query<RoundsPagination>,
 ) -> Result<Json<Vec<DbMinerSnapshot>>, AppError> {
-    let limit = p.limit.unwrap_or(100).max(1).min(1000);
+    let limit = p.limit.unwrap_or(1200).max(1).min(2000);
     let offset = p.offset.unwrap_or(0).max(0);
     let miners_history = database::get_miner_snapshots(&state.db_pool, pubkey, limit, offset).await?;
     Ok(Json(miners_history))
