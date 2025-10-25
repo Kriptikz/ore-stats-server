@@ -94,7 +94,7 @@ pub async fn insert_treasury(pool: &Pool<Sqlite>, r: &CreateTreasury) -> Result<
         r#"
         INSERT INTO treasury (
             balance, motherlode, total_staked, total_unclaimed, total_refined, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?)
         "#
     )
     .bind(r.balance)
@@ -115,7 +115,7 @@ pub async fn insert_round(pool: &Pool<Sqlite>, r: &RoundRow) -> Result<(), sqlx:
         INSERT INTO rounds (
             id, slot_hash, winning_square, expires_at, motherlode, rent_payer, top_miner,
             top_miner_reward, total_deployed, total_vaulted, total_winnings, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             slot_hash        = excluded.slot_hash,
             winning_square   = excluded.winning_square,
