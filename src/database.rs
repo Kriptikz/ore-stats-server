@@ -490,5 +490,133 @@ pub async fn get_leaderboard_last_60_rounds(
 
     Ok(rows)
 }
+#[derive(Serialize, Deserialize, Debug, Clone, sqlx::FromRow)]
+pub struct MinerOreLeaderboardRow {
+    pub rank: i64,                // ranked by total_ore_earned DESC
+    pub pubkey: String,
+    pub rounds_played: i64,
+    pub total_sol_deployed: i64,
+    pub total_sol_earned: i64,
+    pub total_ore_earned: i64,
+    pub recovered_winner_amount: i64,
+    pub net_sol_change: i64,      // still useful context even though we sort by ore
+}
 
+
+pub async fn get_ore_leaderboard_all_time(
+    pool: &sqlx::SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<MinerOreLeaderboardRow>> {
+    let rows = sqlx::query_as::<_, MinerOreLeaderboardRow>(r#"
+        WITH per_miner_round AS (
+          SELECT
+            d.pubkey,
+            d.round_id,
+            SUM(d.amount)      AS total_deployed,
+            SUM(d.sol_earned)  AS total_sol_earned,
+            SUM(d.ore_earned)  AS total_ore_earned,
+            MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END)
+                                   AS recovered_winner_amount,
+            (SUM(d.sol_earned) - SUM(d.amount)
+             + MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END))
+                                   AS net_sol_round
+          FROM deployments d
+          JOIN rounds r ON r.id = d.round_id
+          GROUP BY d.pubkey, d.round_id
+        ),
+        miner_aggs AS (
+          SELECT
+            pubkey,
+            COUNT(*)                AS rounds_played,
+            SUM(total_deployed)     AS total_sol_deployed,
+            SUM(total_sol_earned)   AS total_sol_earned,
+            SUM(total_ore_earned)   AS total_ore_earned,
+            SUM(recovered_winner_amount) AS recovered_winner_amount,
+            SUM(net_sol_round)      AS net_sol_change
+          FROM per_miner_round
+          GROUP BY pubkey
+        )
+        SELECT
+          ROW_NUMBER() OVER (ORDER BY total_ore_earned DESC, total_sol_earned DESC) AS rank,
+          pubkey,
+          rounds_played,
+          total_sol_deployed,
+          total_sol_earned,
+          total_ore_earned,
+          recovered_winner_amount,
+          net_sol_change
+        FROM miner_aggs
+        ORDER BY rank
+        LIMIT ? OFFSET ?;
+    "#)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn get_ore_leaderboard_last_n_rounds(
+    pool: &sqlx::SqlitePool,
+    n_rounds: i64,   // e.g. 60
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<MinerOreLeaderboardRow>> {
+    let rows = sqlx::query_as::<_, MinerOreLeaderboardRow>(r#"
+        WITH last_n_rounds AS (
+          SELECT id
+          FROM rounds
+          ORDER BY id DESC
+          LIMIT ?
+        ),
+        per_miner_round AS (
+          SELECT
+            d.pubkey,
+            d.round_id,
+            SUM(d.amount)      AS total_deployed,
+            SUM(d.sol_earned)  AS total_sol_earned,
+            SUM(d.ore_earned)  AS total_ore_earned,
+            MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END)
+                                   AS recovered_winner_amount,
+            (SUM(d.sol_earned) - SUM(d.amount)
+             + MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END))
+                                   AS net_sol_round
+          FROM deployments d
+          JOIN rounds r ON r.id = d.round_id
+          WHERE d.round_id IN (SELECT id FROM last_n_rounds)
+          GROUP BY d.pubkey, d.round_id
+        ),
+        miner_aggs AS (
+          SELECT
+            pubkey,
+            COUNT(*)                AS rounds_played,
+            SUM(total_deployed)     AS total_sol_deployed,
+            SUM(total_sol_earned)   AS total_sol_earned,
+            SUM(total_ore_earned)   AS total_ore_earned,
+            SUM(recovered_winner_amount) AS recovered_winner_amount,
+            SUM(net_sol_round)      AS net_sol_change
+          FROM per_miner_round
+          GROUP BY pubkey
+        )
+        SELECT
+          ROW_NUMBER() OVER (ORDER BY total_ore_earned DESC, total_sol_earned DESC) AS rank,
+          pubkey,
+          rounds_played,
+          total_sol_deployed,
+          total_sol_earned,
+          total_ore_earned,
+          recovered_winner_amount,
+          net_sol_change
+        FROM miner_aggs
+        ORDER BY rank
+        LIMIT ? OFFSET ?;
+    "#)
+    .bind(n_rounds)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
 

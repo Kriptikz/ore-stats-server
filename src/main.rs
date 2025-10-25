@@ -14,7 +14,7 @@ use steel::{AccountDeserialize, Pubkey};
 use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::update_data_system};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::update_data_system};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -146,7 +146,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/treasuries", get(get_treasuries))
         .route("/miner/{pubkey}", get(get_miner_history))
         .route("/miner/totals", get(get_miner_totals))
+        .route("/miner/totals/ore", get(get_miner_totals_ore))
         .route("/leaderboard", get(get_leaderboard))
+        .route("/leaderboard/ore", get(get_leaderboard_ore))
         .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
@@ -332,6 +334,32 @@ async fn get_leaderboard(
     Ok(Json(rows))
 }
 
+#[derive(Debug, Deserialize)]
+struct OreLeaderboardQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    //rounds: Option<i64>, // if present, use "Last X rounds"; else All Time
+}
+
+async fn get_miner_totals_ore(
+    State(state): State<AppState>,
+    Query(q): Query<OreLeaderboardQuery>,
+) -> Result<Json<Vec<MinerOreLeaderboardRow>>, AppError> {
+    let limit  = q.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = q.offset.unwrap_or(0).max(0);
+    let rows =  database::get_ore_leaderboard_all_time(&state.db_pool, limit, offset).await?;
+    Ok(Json(rows))
+}
+
+async fn get_leaderboard_ore(
+    State(state): State<AppState>,
+    Query(p): Query<Pagination>,
+) -> Result<Json<Vec<MinerOreLeaderboardRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let rows = database::get_ore_leaderboard_last_n_rounds(&state.db_pool, 60, limit, offset).await?;
+    Ok(Json(rows))
+}
 
 #[derive(Error, Debug)]
 enum AppError {
