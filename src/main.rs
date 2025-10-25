@@ -14,7 +14,7 @@ use steel::{AccountDeserialize, Pubkey};
 use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, RoundRow}, rpc::update_data_system};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::update_data_system};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -145,6 +145,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/rounds", get(get_rounds))
         .route("/treasuries", get(get_treasuries))
         .route("/miner/{pubkey}", get(get_miner_history))
+        .route("/miner/totals", get(get_miner_totals))
+        .route("/leaderboard", get(get_leaderboard))
         .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
@@ -179,7 +181,7 @@ async fn root() -> &'static str {
 }
 
 #[derive(Debug, Deserialize)]
-struct Pagination {
+struct MinersPagination {
     limit: Option<i64>,
     offset: Option<i64>,
     order_by: Option<String>,
@@ -187,7 +189,7 @@ struct Pagination {
 
 async fn get_miners(
     State(state): State<AppState>,
-    Query(p): Query<Pagination>,
+    Query(p): Query<MinersPagination>,
 ) -> Result<Json<Vec<AppMiner>>, AppError> {
     let limit = p.limit.unwrap_or(2500).max(1).min(2500) as usize;
     let offset = p.offset.unwrap_or(0).max(0) as usize;
@@ -303,6 +305,33 @@ async fn get_deployments(
     let deployments = get_deployments_by_round(&state.db_pool, p.round_id as i64).await?;
     Ok(Json(deployments))
 }
+
+#[derive(Debug, Deserialize)]
+struct Pagination {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn get_miner_totals(
+    State(state): State<AppState>,
+    Query(p): Query<Pagination>,
+) -> Result<Json<Vec<MinerTotalsRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let rows = database::get_miner_totals_all_time(&state.db_pool, limit, offset).await?;
+    Ok(Json(rows))
+}
+
+async fn get_leaderboard(
+    State(state): State<AppState>,
+    Query(p): Query<Pagination>,
+) -> Result<Json<Vec<MinerLeaderboardRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let rows = database::get_leaderboard_last_60_rounds(&state.db_pool, limit, offset).await?;
+    Ok(Json(rows))
+}
+
 
 #[derive(Error, Debug)]
 enum AppError {
