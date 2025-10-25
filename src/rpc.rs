@@ -7,7 +7,7 @@ use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterTyp
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize, Numeric, Pubkey};
 
-use crate::{app_state::{AppMiner, AppState}, database::{insert_deployments, insert_round, CreateDeployment, RoundRow}, BOARD_ADDRESS};
+use crate::{app_state::{AppMiner, AppState}, database::{insert_deployments, insert_round, insert_treasury, CreateDeployment, CreateTreasury, RoundRow}, BOARD_ADDRESS};
 
 pub struct MinerSnapshot {
     round_id: u64,
@@ -187,6 +187,11 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         if let Err(e) = insert_round(&db_pool, &RoundRow::from(round)).await {
                             tracing::error!("Failed to insert round: {:?}", e);
                         }
+
+                        // insert treasury
+                        if let Err(e) = insert_treasury(&db_pool, &CreateTreasury::from(treasury)).await {
+                            tracing::error!("Failed to insert treasury: {:?}", e);
+                        }
                         continue;
                     } else {
                         // process round data
@@ -317,6 +322,11 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         // insert round
                         if let Err(e) = insert_round(&db_pool, &RoundRow::from(round)).await {
                             tracing::error!("Failed to insert round: {:?}", e);
+                        }
+
+                        // insert treasury
+                        if let Err(e) = insert_treasury(&db_pool, &CreateTreasury::from(treasury)).await {
+                            tracing::error!("Failed to insert treasury: {:?}", e);
                         }
                         miners_snapshot.completed = true;
                     }

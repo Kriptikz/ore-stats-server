@@ -1,6 +1,29 @@
-use ore_api::state::{Miner, Round};
+use ore_api::state::{Round, Treasury};
 use serde::{Deserialize, Serialize};
 use sqlx::{prelude::FromRow, Pool, Sqlite};
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct CreateTreasury {
+    pub balance: i64,
+    pub motherlode: i64,
+    pub total_staked: i64,
+    pub total_unclaimed: i64,
+    pub total_refined: i64,
+    pub created_at: String, // RFC3339
+}
+
+impl From<Treasury> for CreateTreasury {
+    fn from(r: Treasury) -> Self {
+        CreateTreasury {
+            balance: r.balance as i64,
+            motherlode: r.motherlode as i64,
+            total_staked: r.total_staked as i64,
+            total_unclaimed: r.total_unclaimed as i64,
+            total_refined: r.total_refined as i64,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct CreateDeployment {
@@ -18,6 +41,7 @@ pub struct CreateDeployment {
 pub struct RoundRow {
     pub id: i64,
     pub slot_hash: Vec<u8>,
+    pub winning_square: i64,
     pub expires_at: i64,
     pub motherlode: i64,
     pub rent_payer: String,
@@ -31,32 +55,70 @@ pub struct RoundRow {
 
 impl From<Round> for RoundRow {
     fn from(r: Round) -> Self {
-        RoundRow {
-            id: r.id as i64,
-            slot_hash: r.slot_hash.to_vec(),
-            expires_at: r.expires_at as i64,
-            motherlode: r.motherlode as i64,
-            rent_payer: r.rent_payer.to_string(),
-            top_miner: r.top_miner.to_string(),
-            top_miner_reward: r.top_miner_reward as i64,
-            total_deployed: r.total_deployed as i64,
-            total_vaulted: r.total_vaulted as i64,
-            total_winnings: r.total_winnings as i64,
-            created_at: chrono::Utc::now().to_rfc3339(),
+        if let Some(rand) = r.rng() {
+            RoundRow {
+                id: r.id as i64,
+                slot_hash: r.slot_hash.to_vec(),
+                winning_square: r.winning_square(rand) as i64,
+                expires_at: r.expires_at as i64,
+                motherlode: r.motherlode as i64,
+                rent_payer: r.rent_payer.to_string(),
+                top_miner: r.top_miner.to_string(),
+                top_miner_reward: r.top_miner_reward as i64,
+                total_deployed: r.total_deployed as i64,
+                total_vaulted: r.total_vaulted as i64,
+                total_winnings: r.total_winnings as i64,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            }
+        } else {
+            RoundRow {
+                id: r.id as i64,
+                slot_hash: r.slot_hash.to_vec(),
+                winning_square: 100,
+                expires_at: r.expires_at as i64,
+                motherlode: r.motherlode as i64,
+                rent_payer: r.rent_payer.to_string(),
+                top_miner: r.top_miner.to_string(),
+                top_miner_reward: r.top_miner_reward as i64,
+                total_deployed: r.total_deployed as i64,
+                total_vaulted: r.total_vaulted as i64,
+                total_winnings: r.total_winnings as i64,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            }
         }
     }
 }
 
+pub async fn insert_treasury(pool: &Pool<Sqlite>, r: &CreateTreasury) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO treasury (
+            balance, motherlode, total_staked, total_unclaimed, total_refined, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        "#
+    )
+    .bind(r.balance)
+    .bind(r.motherlode)
+    .bind(r.total_staked)
+    .bind(r.total_unclaimed)
+    .bind(r.total_refined)
+    .bind(&r.created_at)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
 
 pub async fn insert_round(pool: &Pool<Sqlite>, r: &RoundRow) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         INSERT INTO rounds (
-            id, slot_hash, expires_at, motherlode, rent_payer, top_miner,
+            id, slot_hash, winning_square, expires_at, motherlode, rent_payer, top_miner,
             top_miner_reward, total_deployed, total_vaulted, total_winnings, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             slot_hash        = excluded.slot_hash,
+            winning_square   = excluded.winning_square,
             expires_at       = excluded.expires_at,
             motherlode       = excluded.motherlode,
             rent_payer       = excluded.rent_payer,
@@ -70,6 +132,7 @@ pub async fn insert_round(pool: &Pool<Sqlite>, r: &RoundRow) -> Result<(), sqlx:
     )
     .bind(r.id)
     .bind(r.slot_hash.as_slice())
+    .bind(r.winning_square)
     .bind(r.expires_at)
     .bind(r.motherlode)
     .bind(r.rent_payer.clone())
