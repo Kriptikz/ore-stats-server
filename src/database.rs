@@ -1,6 +1,42 @@
-use ore_api::state::{Round, Treasury};
+use ore_api::state::{Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
 use sqlx::{prelude::FromRow, Pool, Sqlite};
+
+use crate::{app_state::AppMiner};
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct CreateMinerSnapshot {
+    pub pubkey: String,
+    pub unclaimed_ore: i64,
+    pub refined_ore: i64,
+    pub lifetime_sol: i64,
+    pub lifetime_ore: i64,
+    pub created_at: String, // RFC3339
+}
+
+impl From<AppMiner> for CreateMinerSnapshot {
+    fn from(r: AppMiner) -> Self {
+        CreateMinerSnapshot {
+            pubkey: r.authority,
+            unclaimed_ore: r.rewards_ore as i64,
+            refined_ore: r.refined_ore as i64,
+            lifetime_sol: r.lifetime_rewards_sol as i64,
+            lifetime_ore: r.lifetime_rewards_ore as i64,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct DbMinerSnapshot {
+    pub id: i64,
+    pub pubkey: String,
+    pub unclaimed_ore: i64,
+    pub refined_ore: i64,
+    pub lifetime_sol: i64,
+    pub lifetime_ore: i64,
+    pub created_at: String, // RFC3339
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct CreateTreasury {
@@ -267,3 +303,52 @@ pub async fn get_deployments_by_round(
     Ok(deployments)
 }
 
+pub async fn insert_miner_snapshots(pool: &Pool<Sqlite>, rows: &[CreateMinerSnapshot]) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    for d in rows {
+        sqlx::query(
+            r#"
+            INSERT INTO miner_snapshots (
+                pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?);
+            "#
+        )
+        .bind(&d.pubkey)
+        .bind(d.unclaimed_ore)
+        .bind(d.refined_ore)
+        .bind(d.lifetime_sol)
+        .bind(d.lifetime_ore)
+        .bind(&d.created_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn get_miner_snapshots(
+    pool: &Pool<Sqlite>,
+    pubkey: String,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<DbMinerSnapshot>, sqlx::Error> {
+    let miner_data = sqlx::query_as::<_, DbMinerSnapshot>(
+        r#"
+        SELECT
+            id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
+        FROM miner_snapshots
+        WHERE pubkey = ?
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+        "#
+    )
+    .bind(pubkey)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(miner_data)
+}

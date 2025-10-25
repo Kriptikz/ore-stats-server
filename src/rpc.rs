@@ -7,7 +7,7 @@ use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterTyp
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize, Numeric, Pubkey};
 
-use crate::{app_state::{AppMiner, AppState}, database::{insert_deployments, insert_round, insert_treasury, CreateDeployment, CreateTreasury, RoundRow}, BOARD_ADDRESS};
+use crate::{app_state::{AppMiner, AppState}, database::{insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
 
 pub struct MinerSnapshot {
     round_id: u64,
@@ -177,6 +177,19 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         *l = miners_snapshot.miners.clone();
                         drop(l);
                         miners_snapshot.completed = true;
+
+                        let mut db_snapshot: Vec<CreateMinerSnapshot> = vec![];
+
+                        for m in miners_snapshot.miners.iter() {
+                            let m = m.clone();
+                            db_snapshot.push(m.into());
+                        }
+
+                        // insert miners
+                        if let Err(e) = insert_miner_snapshots(&db_pool, &db_snapshot).await {
+                            tracing::error!("Failed to insert miners snapshot: {:?}", e);
+                        }
+
                         // update round
                         let r = app_state.rounds.clone();
                         let mut l = r.write().await;
@@ -312,6 +325,19 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         let mut l = r.write().await;
                         *l = miners_snapshot.miners.clone();
                         drop(l);
+
+                        let mut db_snapshot: Vec<CreateMinerSnapshot> = vec![];
+
+                        for m in miners_snapshot.miners.iter() {
+                            let m = m.clone();
+                            db_snapshot.push(m.into());
+                        }
+
+                        // insert miners
+                        if let Err(e) = insert_miner_snapshots(&db_pool, &db_snapshot).await {
+                            tracing::error!("Failed to insert miners snapshot: {:?}", e);
+                        }
+
 
                         // update round
                         let r = app_state.rounds.clone();

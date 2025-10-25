@@ -3,7 +3,7 @@ use std::{env, str::FromStr, sync::Arc, time::{Duration, Instant}};
 use anyhow::{anyhow, bail};
 use sqlx::sqlite::SqliteConnectOptions;
 use thiserror::Error;
-use axum::{body::Body, extract::{Query, State}, http::{Request, Response, StatusCode}, middleware::{self, Next}, routing::get, Json, Router};
+use axum::{body::Body, extract::{Path, Query, State}, http::{Request, Response, StatusCode}, middleware::{self, Next}, routing::get, Json, Router};
 use const_crypto::ed25519;
 use ore_api::{consts::{BOARD, ROUND, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use steel::{AccountDeserialize, Pubkey};
 use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbTreasury, RoundRow}, rpc::update_data_system};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, RoundRow}, rpc::update_data_system};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -144,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/deployments", get(get_deployments))
         .route("/rounds", get(get_rounds))
         .route("/treasuries", get(get_treasuries))
+        .route("/miner/{pubkey}", get(get_miner_history))
         .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
@@ -277,6 +278,17 @@ async fn get_treasuries(
     let offset = p.offset.unwrap_or(0).max(0);
     let treasuries = database::get_treasuries(&state.db_pool, limit, offset).await?;
     Ok(Json(treasuries))
+}
+
+async fn get_miner_history(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(p): Query<RoundsPagination>,
+) -> Result<Json<Vec<DbMinerSnapshot>>, AppError> {
+    let limit = p.limit.unwrap_or(100).max(1).min(1000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let miners_history = database::get_miner_snapshots(&state.db_pool, pubkey, limit, offset).await?;
+    Ok(Json(miners_history))
 }
 
 #[derive(Debug, Deserialize)]
