@@ -26,6 +26,17 @@ impl From<Treasury> for CreateTreasury {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct DbTreasury {
+    pub id: i64,
+    pub balance: i64,
+    pub motherlode: i64,
+    pub total_staked: i64,
+    pub total_unclaimed: i64,
+    pub total_refined: i64,
+    pub created_at: String, // RFC3339
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct CreateDeployment {
     pub round_id: i64,
     pub pubkey: String,
@@ -107,6 +118,22 @@ pub async fn insert_treasury(pool: &Pool<Sqlite>, r: &CreateTreasury) -> Result<
     .await?;
 
     Ok(())
+}
+
+pub async fn get_treasuries(pool: &Pool<Sqlite>, limit: i64, offset: i64) -> Result<Vec<DbTreasury>, sqlx::Error> {
+    let treasuries = sqlx::query_as::<_, DbTreasury>(
+        r#"
+        SELECT * FROM treasury
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+        "#
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(treasuries)
 }
 
 pub async fn insert_round(pool: &Pool<Sqlite>, r: &RoundRow) -> Result<(), sqlx::Error> {

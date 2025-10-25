@@ -14,7 +14,7 @@ use steel::{AccountDeserialize, Pubkey};
 use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, RoundRow}, rpc::update_data_system};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbTreasury, RoundRow}, rpc::update_data_system};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -143,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/miners", get(get_miners))
         .route("/deployments", get(get_deployments))
         .route("/rounds", get(get_rounds))
+        .route("/treasuries", get(get_treasuries))
         .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
@@ -258,7 +259,6 @@ struct RoundsPagination {
     offset: Option<i64>,
 }
 
-
 async fn get_rounds(
     State(state): State<AppState>,
     Query(p): Query<RoundsPagination>,
@@ -267,6 +267,16 @@ async fn get_rounds(
     let offset = p.offset.unwrap_or(0).max(0);
     let rounds = database::get_rounds(&state.db_pool, limit, offset).await?;
     Ok(Json(rounds))
+}
+
+async fn get_treasuries(
+    State(state): State<AppState>,
+    Query(p): Query<RoundsPagination>,
+) -> Result<Json<Vec<DbTreasury>>, AppError> {
+    let limit = p.limit.unwrap_or(100).max(1).min(1000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let treasuries = database::get_treasuries(&state.db_pool, limit, offset).await?;
+    Ok(Json(treasuries))
 }
 
 #[derive(Debug, Deserialize)]
