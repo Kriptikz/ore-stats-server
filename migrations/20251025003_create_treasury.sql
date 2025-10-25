@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS treasury (
-    id              INTEGER NOT NULL,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
     balance         INTEGER NOT NULL,
     motherlode      INTEGER NOT NULL,
     total_staked    INTEGER NOT NULL,

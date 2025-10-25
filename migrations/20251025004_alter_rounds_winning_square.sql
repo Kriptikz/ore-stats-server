@@ -1,2 +1,0 @@
-ALTER TABLE deployments
-ADD COLUMN winning_square INTEGER NOT NULL DEFAULT 100;

@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS deployments (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
     round_id      INTEGER NOT NULL,
     pubkey        TEXT    NOT NULL,
     square_id     INTEGER NOT NULL,

@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS rounds (
     id                INTEGER PRIMARY KEY,
     slot_hash         BLOB NOT NULL CHECK(length(slot_hash) = 32),
+    winning_square    INTEGER NOT NULL,
     expires_at        INTEGER NOT NULL,
     motherlode        INTEGER NOT NULL,
     rent_payer        TEXT NOT NULL,
