@@ -504,7 +504,7 @@ pub struct MinerOreLeaderboardRow {
     pub rank: i64,                // ranked by total_ore_earned DESC
     pub pubkey: String,
     pub rounds_played: i64,
-    pub round_won: i64,
+    pub rounds_won: i64,
     pub total_sol_deployed: i64,
     pub total_sol_earned: i64,
     pub total_ore_earned: i64,
