@@ -152,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/deployments", get(get_deployments))
         .route("/rounds", get(get_rounds))
         .route("/treasuries", get(get_treasuries))
+        .route("/miner/latest/{pubkey}", get(get_miner_latest))
         .route("/miner/{pubkey}", get(get_miner_history))
         .route("/miner/rounds/{pubkey}", get(get_miner_rounds))
         .route("/miner/stats/{pubkey}", get(get_miner_stats))
@@ -393,6 +394,30 @@ async fn get_miner_stats(
     } else {
         return Ok(Json(vec![]))
     }
+}
+
+async fn get_miner_latest(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Result<Json<Option<AppMiner>>, AppError> {
+    let pubkey = if let Ok(p) = Pubkey::from_str(&pubkey) {
+        p.to_string()
+    } else {
+        return Ok(Json(None))
+    };
+
+    let miners = state.miners.clone();
+    let reader = miners.read().await;
+    let miners = reader.clone();
+    drop(reader);
+    if miners.len() > 0 {
+        for m in miners {
+            if m.authority == pubkey {
+                return Ok(Json(Some(m)));
+            }
+        }
+    }
+    Ok(Json(None))
 }
 
 #[derive(Error, Debug)]
