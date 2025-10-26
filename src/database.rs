@@ -361,7 +361,6 @@ pub struct MinerTotalsRow {
     pub total_sol_deployed: i64,
     pub total_sol_earned: i64,
     pub total_ore_earned: i64,
-    pub total_recovered_winner_amount: i64,
     pub net_sol_change: i64,
     pub sol_balance_direction: String,
 }
@@ -371,7 +370,7 @@ pub struct MinerLeaderboardRow {
     pub rank: i64,
     pub pubkey: String,
     pub rounds_played: i64,
-    pub rounds_won: i64,                 // NEW
+    pub rounds_won: i64,
     pub total_sol_deployed: i64,
     pub total_sol_earned: i64,
     pub total_ore_earned: i64,
@@ -392,13 +391,8 @@ pub async fn get_miner_totals_all_time(
             SUM(d.amount)      AS total_deployed,
             SUM(d.sol_earned)  AS total_sol_earned,
             SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END)
-                                 AS recovered_winner_amount,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END)
-                                 AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)
-             + MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END))
-                                 AS net_sol_round
+            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
+            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
           FROM deployments d
           JOIN rounds r ON r.id = d.round_id
           GROUP BY d.pubkey, d.round_id
@@ -410,7 +404,6 @@ pub async fn get_miner_totals_all_time(
           SUM(total_deployed)                       AS total_sol_deployed,
           SUM(total_sol_earned)                     AS total_sol_earned,
           SUM(total_ore_earned)                     AS total_ore_earned,
-          SUM(recovered_winner_amount)              AS total_recovered_winner_amount,
           SUM(net_sol_round)                        AS net_sol_change,
           CASE
             WHEN SUM(net_sol_round) > 0 THEN 'up'
@@ -419,6 +412,7 @@ pub async fn get_miner_totals_all_time(
           END AS sol_balance_direction
         FROM per_miner_round
         GROUP BY pubkey
+        HAVING COUNT(*) >= 100
         ORDER BY net_sol_change DESC
         LIMIT ? OFFSET ?;
     "#)
@@ -449,13 +443,8 @@ pub async fn get_leaderboard_last_60_rounds(
             SUM(d.amount)      AS total_deployed,
             SUM(d.sol_earned)  AS total_sol_earned,
             SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END)
-                                 AS recovered_winner_amount,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END)
-                                 AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)
-             + MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END))
-                                 AS net_sol_round
+            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
+            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
           FROM deployments d
           JOIN rounds r ON r.id = d.round_id
           WHERE d.round_id IN (SELECT id FROM last_60_rounds)
@@ -499,6 +488,7 @@ pub async fn get_leaderboard_last_60_rounds(
     Ok(rows)
 }
 
+
 #[derive(Serialize, Deserialize, Debug, Clone, sqlx::FromRow)]
 pub struct MinerOreLeaderboardRow {
     pub rank: i64,                // ranked by total_ore_earned DESC
@@ -508,7 +498,6 @@ pub struct MinerOreLeaderboardRow {
     pub total_sol_deployed: i64,
     pub total_sol_earned: i64,
     pub total_ore_earned: i64,
-    pub recovered_winner_amount: i64,
     pub net_sol_change: i64,      // still useful context even though we sort by ore
 }
 
@@ -526,13 +515,8 @@ pub async fn get_ore_leaderboard_all_time(
             SUM(d.amount)      AS total_deployed,
             SUM(d.sol_earned)  AS total_sol_earned,
             SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END)
-                                   AS recovered_winner_amount,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END)
-                                   AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)
-             + MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END))
-                                   AS net_sol_round
+            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
+            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
           FROM deployments d
           JOIN rounds r ON r.id = d.round_id
           GROUP BY d.pubkey, d.round_id
@@ -540,15 +524,15 @@ pub async fn get_ore_leaderboard_all_time(
         miner_aggs AS (
           SELECT
             pubkey,
-            COUNT(*)                    AS rounds_played,
-            SUM(won_round)              AS rounds_won,
-            SUM(total_deployed)         AS total_sol_deployed,
-            SUM(total_sol_earned)       AS total_sol_earned,
-            SUM(total_ore_earned)       AS total_ore_earned,
-            SUM(recovered_winner_amount) AS recovered_winner_amount,
-            SUM(net_sol_round)          AS net_sol_change
+            COUNT(*)                  AS rounds_played,
+            SUM(won_round)            AS rounds_won,
+            SUM(total_deployed)       AS total_sol_deployed,
+            SUM(total_sol_earned)     AS total_sol_earned,
+            SUM(total_ore_earned)     AS total_ore_earned,
+            SUM(net_sol_round)        AS net_sol_change
           FROM per_miner_round
           GROUP BY pubkey
+          HAVING COUNT(*) >= 100
         )
         SELECT
           ROW_NUMBER() OVER (ORDER BY total_ore_earned DESC, total_sol_earned DESC) AS rank,
@@ -558,7 +542,6 @@ pub async fn get_ore_leaderboard_all_time(
           total_sol_deployed,
           total_sol_earned,
           total_ore_earned,
-          recovered_winner_amount,
           net_sol_change
         FROM miner_aggs
         ORDER BY rank
@@ -570,6 +553,7 @@ pub async fn get_ore_leaderboard_all_time(
     .await?;
     Ok(rows)
 }
+
 
 
 pub async fn get_ore_leaderboard_last_n_rounds(
@@ -592,13 +576,8 @@ pub async fn get_ore_leaderboard_last_n_rounds(
             SUM(d.amount)      AS total_deployed,
             SUM(d.sol_earned)  AS total_sol_earned,
             SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END)
-                                   AS recovered_winner_amount,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END)
-                                   AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)
-             + MAX(CASE WHEN d.square_id = r.winning_square THEN d.amount ELSE 0 END))
-                                   AS net_sol_round
+            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
+            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
           FROM deployments d
           JOIN rounds r ON r.id = d.round_id
           WHERE d.round_id IN (SELECT id FROM last_n_rounds)
@@ -607,13 +586,12 @@ pub async fn get_ore_leaderboard_last_n_rounds(
         miner_aggs AS (
           SELECT
             pubkey,
-            COUNT(*)                    AS rounds_played,
-            SUM(won_round)              AS rounds_won,
-            SUM(total_deployed)         AS total_sol_deployed,
-            SUM(total_sol_earned)       AS total_sol_earned,
-            SUM(total_ore_earned)       AS total_ore_earned,
-            SUM(recovered_winner_amount) AS recovered_winner_amount,
-            SUM(net_sol_round)          AS net_sol_change
+            COUNT(*)                  AS rounds_played,
+            SUM(won_round)            AS rounds_won,
+            SUM(total_deployed)       AS total_sol_deployed,
+            SUM(total_sol_earned)     AS total_sol_earned,
+            SUM(total_ore_earned)     AS total_ore_earned,
+            SUM(net_sol_round)        AS net_sol_change
           FROM per_miner_round
           GROUP BY pubkey
         )
@@ -625,7 +603,6 @@ pub async fn get_ore_leaderboard_last_n_rounds(
           total_sol_deployed,
           total_sol_earned,
           total_ore_earned,
-          recovered_winner_amount,
           net_sol_change
         FROM miner_aggs
         ORDER BY rank
@@ -638,5 +615,6 @@ pub async fn get_ore_leaderboard_last_n_rounds(
     .await?;
     Ok(rows)
 }
+
 
 
