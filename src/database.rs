@@ -211,7 +211,26 @@ pub async fn insert_round(pool: &Pool<Sqlite>, r: &RoundRow) -> Result<(), sqlx:
     Ok(())
 }
 
-pub async fn get_rounds(pool: &Pool<Sqlite>, limit: i64, offset: i64) -> Result<Vec<RoundRow>, sqlx::Error> {
+pub async fn get_rounds(pool: &Pool<Sqlite>, limit: i64, offset: i64, ml: Option<bool>) -> Result<Vec<RoundRow>, sqlx::Error> {
+    if let Some(ml) = ml {
+        if ml {
+            let rounds = sqlx::query_as::<_, RoundRow>(
+                r#"
+                SELECT * FROM rounds
+                WHERE motherlode > 0
+                ORDER BY id DESC
+                LIMIT ? OFFSET ?
+                "#
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+            return Ok(rounds)
+        }
+    }
+
     let rounds = sqlx::query_as::<_, RoundRow>(
         r#"
         SELECT * FROM rounds

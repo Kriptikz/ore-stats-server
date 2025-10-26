@@ -273,6 +273,7 @@ async fn get_round(
 struct RoundsPagination {
     limit: Option<i64>,
     offset: Option<i64>,
+    ml: Option<bool>
 }
 
 async fn get_rounds(
@@ -281,7 +282,7 @@ async fn get_rounds(
 ) -> Result<Json<Vec<RoundRow>>, AppError> {
     let limit = p.limit.unwrap_or(100).max(1).min(2000);
     let offset = p.offset.unwrap_or(0).max(0);
-    let rounds = database::get_rounds(&state.db_pool, limit, offset).await?;
+    let rounds = database::get_rounds(&state.db_pool, limit, offset, p.ml).await?;
     Ok(Json(rounds))
 }
 
