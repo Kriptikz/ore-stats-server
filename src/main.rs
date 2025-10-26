@@ -52,16 +52,24 @@ async fn main() -> anyhow::Result<()> {
     let db_connect_ops = SqliteConnectOptions::from_str(&db_url)?
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .pragma("cache_size", "-200000") // Set cache to ~200MB (200,000KB)
+        .pragma("temp_store", "memory") // Store temporary data in memory
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
-        .busy_timeout(Duration::from_secs(10))
+        .busy_timeout(Duration::from_secs(15))
         .foreign_keys(true);
 
     let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
         .min_connections(2)
         .max_connections(10)
-        .acquire_timeout(Duration::from_secs(5))
+        .acquire_timeout(Duration::from_secs(10))
         .connect_with(db_connect_ops)
         .await?;
+
+
+    tracing::info!("Running optimize...");
+    sqlx::query("PRAGMA optimize").execute(&db_pool).await?;
+    tracing::info!("Optimize complete!");
+
 
 
     tracing::info!("Running migrations...");
