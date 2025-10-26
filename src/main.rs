@@ -153,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/rounds", get(get_rounds))
         .route("/treasuries", get(get_treasuries))
         .route("/miner/{pubkey}", get(get_miner_history))
+        .route("/miner/rounds/{pubkey}", get(get_miner_rounds))
         .route("/miner/totals", get(get_miner_totals))
         .route("/miner/totals/ore", get(get_miner_totals_ore))
         .route("/leaderboard", get(get_leaderboard))
@@ -301,6 +302,17 @@ async fn get_miner_history(
     let offset = p.offset.unwrap_or(0).max(0);
     let miners_history = database::get_miner_snapshots(&state.db_pool, pubkey, limit, offset).await?;
     Ok(Json(miners_history))
+}
+
+async fn get_miner_rounds(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(p): Query<RoundsPagination>,
+) -> Result<Json<Vec<RoundRow>>, AppError> {
+    let limit = p.limit.unwrap_or(10).max(1).min(100);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let rounds = database::get_miner_rounds(&state.db_pool, pubkey, limit, offset).await?;
+    Ok(Json(rounds))
 }
 
 #[derive(Debug, Deserialize)]
