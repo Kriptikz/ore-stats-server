@@ -638,5 +638,46 @@ pub async fn get_ore_leaderboard_last_n_rounds(
     Ok(rows)
 }
 
+pub async fn get_miner_stats(
+    pool: &sqlx::SqlitePool,
+    pubkey: String,
+) -> anyhow::Result<Option<MinerTotalsRow>> {
+    let row = sqlx::query_as::<_, MinerTotalsRow>(r#"
+        WITH per_miner_round AS (
+          SELECT
+            d.pubkey,
+            d.round_id,
+            SUM(d.amount)      AS total_deployed,
+            SUM(d.sol_earned)  AS total_sol_earned,
+            SUM(d.ore_earned)  AS total_ore_earned,
+            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
+            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
+          FROM deployments d
+          JOIN rounds r ON r.id = d.round_id
+          WHERE d.pubkey = ?
+          GROUP BY d.pubkey, d.round_id
+        )
+        SELECT
+          pubkey,
+          COUNT(*)                                  AS rounds_played,
+          SUM(won_round)                            AS rounds_won,
+          SUM(total_deployed)                       AS total_sol_deployed,
+          SUM(total_sol_earned)                     AS total_sol_earned,
+          SUM(total_ore_earned)                     AS total_ore_earned,
+          SUM(net_sol_round)                        AS net_sol_change,
+          CASE
+            WHEN SUM(net_sol_round) > 0 THEN 'up'
+            WHEN SUM(net_sol_round) < 0 THEN 'down'
+            ELSE 'flat'
+          END AS sol_balance_direction
+        FROM per_miner_round
+        GROUP BY pubkey;
+    "#)
+    .bind(pubkey)
+    .fetch_optional(pool) // returns Option<T>
+    .await?;
+
+    Ok(row)
+}
 
 

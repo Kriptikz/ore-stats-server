@@ -154,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/treasuries", get(get_treasuries))
         .route("/miner/{pubkey}", get(get_miner_history))
         .route("/miner/rounds/{pubkey}", get(get_miner_rounds))
+        .route("/miner/stats/{pubkey}", get(get_miner_stats))
         .route("/miner/totals", get(get_miner_totals))
         .route("/miner/totals/ore", get(get_miner_totals_ore))
         .route("/leaderboard", get(get_leaderboard))
@@ -379,6 +380,19 @@ async fn get_leaderboard_ore(
     let offset = p.offset.unwrap_or(0).max(0);
     let rows = database::get_ore_leaderboard_last_n_rounds(&state.db_pool, 60, limit, offset).await?;
     Ok(Json(rows))
+}
+
+async fn get_miner_stats(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(p): Query<RoundsPagination>,
+) -> Result<Json<Vec<MinerTotalsRow>>, AppError> {
+    let miner_stats = database::get_miner_stats(&state.db_pool, pubkey).await?;
+    if let Some(s) = miner_stats {
+        return Ok(Json(vec![s]))
+    } else {
+        return Ok(Json(vec![]))
+    }
 }
 
 #[derive(Error, Debug)]
