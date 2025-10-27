@@ -425,35 +425,21 @@ pub async fn get_miner_totals_all_time(
     offset: i64,
 ) -> anyhow::Result<Vec<MinerTotalsRow>> {
     let rows = sqlx::query_as::<_, MinerTotalsRow>(r#"
-        WITH per_miner_round AS (
-          SELECT
-            d.pubkey,
-            d.round_id,
-            SUM(d.amount)      AS total_deployed,
-            SUM(d.sol_earned)  AS total_sol_earned,
-            SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
-          FROM deployments d
-          JOIN rounds r ON r.id = d.round_id
-          GROUP BY d.pubkey, d.round_id
-        )
         SELECT
           pubkey,
-          COUNT(*)                                  AS rounds_played,
-          SUM(won_round)                            AS rounds_won,
-          SUM(total_deployed)                       AS total_sol_deployed,
-          SUM(total_sol_earned)                     AS total_sol_earned,
-          SUM(total_ore_earned)                     AS total_ore_earned,
-          SUM(net_sol_round)                        AS net_sol_change,
+          rounds_played,
+          rounds_won,
+          total_sol_deployed,
+          total_sol_earned,
+          total_ore_earned,
+          net_sol_change,
           CASE
-            WHEN SUM(net_sol_round) > 0 THEN 'up'
-            WHEN SUM(net_sol_round) < 0 THEN 'down'
+            WHEN net_sol_change > 0 THEN 'up'
+            WHEN net_sol_change < 0 THEN 'down'
             ELSE 'flat'
           END AS sol_balance_direction
-        FROM per_miner_round
-        GROUP BY pubkey
-        HAVING COUNT(*) >= 100
+        FROM miner_totals
+        WHERE rounds_played >= 100
         ORDER BY net_sol_change DESC
         LIMIT ? OFFSET ?;
     "#)
@@ -461,47 +447,32 @@ pub async fn get_miner_totals_all_time(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-
     Ok(rows)
 }
 
-pub async fn get_leaderboard_last_60_rounds(
+
+pub async fn get_leaderboard_last_n_rounds(
     pool: &sqlx::SqlitePool,
+    n_rounds: i64,
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<Vec<MinerLeaderboardRow>> {
     let rows = sqlx::query_as::<_, MinerLeaderboardRow>(r#"
-        WITH last_60_rounds AS (
-          SELECT id
-          FROM rounds
-          ORDER BY id DESC
-          LIMIT 60
+        WITH last_n AS (
+          SELECT id FROM rounds ORDER BY id DESC LIMIT ?
         ),
-        per_miner_round AS (
+        agg AS (
           SELECT
-            d.pubkey,
-            d.round_id,
-            SUM(d.amount)      AS total_deployed,
-            SUM(d.sol_earned)  AS total_sol_earned,
-            SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
-          FROM deployments d
-          JOIN rounds r ON r.id = d.round_id
-          WHERE d.round_id IN (SELECT id FROM last_60_rounds)
-          GROUP BY d.pubkey, d.round_id
-        ),
-        miner_aggs AS (
-          SELECT
-            pubkey,
-            COUNT(*)              AS rounds_played,
-            SUM(won_round)        AS rounds_won,
-            SUM(total_deployed)   AS total_sol_deployed,
-            SUM(total_sol_earned) AS total_sol_earned,
-            SUM(total_ore_earned) AS total_ore_earned,
-            SUM(net_sol_round)    AS net_sol_change
-          FROM per_miner_round
-          GROUP BY pubkey
+            s.pubkey,
+            COUNT(*)                         AS rounds_played,
+            SUM(s.won_round)                 AS rounds_won,
+            SUM(s.total_sol_deployed)        AS total_sol_deployed,
+            SUM(s.total_sol_earned)          AS total_sol_earned,
+            SUM(s.total_ore_earned)          AS total_ore_earned,
+            SUM(s.net_sol_round)             AS net_sol_change
+          FROM miner_round_stats s
+          JOIN last_n r ON r.id = s.round_id
+          GROUP BY s.pubkey
         )
         SELECT
           ROW_NUMBER() OVER (ORDER BY net_sol_change DESC) AS rank,
@@ -517,17 +488,18 @@ pub async fn get_leaderboard_last_60_rounds(
             WHEN net_sol_change < 0 THEN 'down'
             ELSE 'flat'
           END AS sol_balance_direction
-        FROM miner_aggs
+        FROM agg
         ORDER BY rank
         LIMIT ? OFFSET ?;
     "#)
+    .bind(n_rounds.max(1))
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
     .await?;
-
     Ok(rows)
 }
+
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, sqlx::FromRow)]
@@ -542,39 +514,12 @@ pub struct MinerOreLeaderboardRow {
     pub net_sol_change: i64,      // still useful context even though we sort by ore
 }
 
-
 pub async fn get_ore_leaderboard_all_time(
     pool: &sqlx::SqlitePool,
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<Vec<MinerOreLeaderboardRow>> {
     let rows = sqlx::query_as::<_, MinerOreLeaderboardRow>(r#"
-        WITH per_miner_round AS (
-          SELECT
-            d.pubkey,
-            d.round_id,
-            SUM(d.amount)      AS total_deployed,
-            SUM(d.sol_earned)  AS total_sol_earned,
-            SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
-          FROM deployments d
-          JOIN rounds r ON r.id = d.round_id
-          GROUP BY d.pubkey, d.round_id
-        ),
-        miner_aggs AS (
-          SELECT
-            pubkey,
-            COUNT(*)                  AS rounds_played,
-            SUM(won_round)            AS rounds_won,
-            SUM(total_deployed)       AS total_sol_deployed,
-            SUM(total_sol_earned)     AS total_sol_earned,
-            SUM(total_ore_earned)     AS total_ore_earned,
-            SUM(net_sol_round)        AS net_sol_change
-          FROM per_miner_round
-          GROUP BY pubkey
-          HAVING COUNT(*) >= 100
-        )
         SELECT
           ROW_NUMBER() OVER (ORDER BY total_ore_earned DESC, total_sol_earned DESC) AS rank,
           pubkey,
@@ -584,7 +529,8 @@ pub async fn get_ore_leaderboard_all_time(
           total_sol_earned,
           total_ore_earned,
           net_sol_change
-        FROM miner_aggs
+        FROM miner_totals
+        WHERE rounds_played >= 100
         ORDER BY rank
         LIMIT ? OFFSET ?;
     "#)
@@ -595,6 +541,7 @@ pub async fn get_ore_leaderboard_all_time(
     Ok(rows)
 }
 
+
 pub async fn get_ore_leaderboard_last_n_rounds(
     pool: &sqlx::SqlitePool,
     n_rounds: i64,
@@ -602,37 +549,21 @@ pub async fn get_ore_leaderboard_last_n_rounds(
     offset: i64,
 ) -> anyhow::Result<Vec<MinerOreLeaderboardRow>> {
     let rows = sqlx::query_as::<_, MinerOreLeaderboardRow>(r#"
-        WITH last_n_rounds AS (
-          SELECT id
-          FROM rounds
-          ORDER BY id DESC
-          LIMIT ?
+        WITH last_n AS (
+          SELECT id FROM rounds ORDER BY id DESC LIMIT ?
         ),
-        per_miner_round AS (
+        agg AS (
           SELECT
-            d.pubkey,
-            d.round_id,
-            SUM(d.amount)      AS total_deployed,
-            SUM(d.sol_earned)  AS total_sol_earned,
-            SUM(d.ore_earned)  AS total_ore_earned,
-            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END) AS won_round,
-            (SUM(d.sol_earned) - SUM(d.amount)) AS net_sol_round
-          FROM deployments d
-          JOIN rounds r ON r.id = d.round_id
-          WHERE d.round_id IN (SELECT id FROM last_n_rounds)
-          GROUP BY d.pubkey, d.round_id
-        ),
-        miner_aggs AS (
-          SELECT
-            pubkey,
+            s.pubkey,
             COUNT(*)                  AS rounds_played,
-            SUM(won_round)            AS rounds_won,
-            SUM(total_deployed)       AS total_sol_deployed,
-            SUM(total_sol_earned)     AS total_sol_earned,
-            SUM(total_ore_earned)     AS total_ore_earned,
-            SUM(net_sol_round)        AS net_sol_change
-          FROM per_miner_round
-          GROUP BY pubkey
+            SUM(s.won_round)          AS rounds_won,
+            SUM(s.total_sol_deployed) AS total_sol_deployed,
+            SUM(s.total_sol_earned)   AS total_sol_earned,
+            SUM(s.total_ore_earned)   AS total_ore_earned,
+            SUM(s.net_sol_round)      AS net_sol_change
+          FROM miner_round_stats s
+          JOIN last_n r ON r.id = s.round_id
+          GROUP BY s.pubkey
         )
         SELECT
           ROW_NUMBER() OVER (ORDER BY total_ore_earned DESC, total_sol_earned DESC) AS rank,
@@ -643,7 +574,7 @@ pub async fn get_ore_leaderboard_last_n_rounds(
           total_sol_earned,
           total_ore_earned,
           net_sol_change
-        FROM miner_aggs
+        FROM agg
         ORDER BY rank
         LIMIT ? OFFSET ?;
     "#)
@@ -696,6 +627,88 @@ pub async fn get_miner_stats(
 
     Ok(row)
 }
+
+pub async fn finalize_round_idempotent(pool: &sqlx::SqlitePool, round_id: i64) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+
+    // a) Read prior contribution for this round
+    let prior: Vec<(String, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(r#"
+        SELECT pubkey, 1 as rounds_played, won_round, total_sol_deployed, total_sol_earned, total_ore_earned, net_sol_round
+        FROM miner_round_stats
+        WHERE round_id = ?
+    "#).bind(round_id).fetch_all(&mut *tx).await?;
+
+    // b) Subtract prior from miner_totals (if any)
+    for (pubkey, rp, won, dep, earned, ore, net) in prior {
+        sqlx::query(r#"
+            UPDATE miner_totals SET
+              rounds_played      = rounds_played      - ?,
+              rounds_won         = rounds_won         - ?,
+              total_sol_deployed = total_sol_deployed - ?,
+              total_sol_earned   = total_sol_earned   - ?,
+              total_ore_earned   = total_ore_earned   - ?,
+              net_sol_change     = net_sol_change     - ?
+            WHERE pubkey = ?
+        "#)
+        .bind(rp).bind(won).bind(dep).bind(earned).bind(ore).bind(net)
+        .bind(&pubkey)
+        .execute(&mut *tx).await?;
+    }
+
+    // c) Recompute & upsert this round's rows (same SELECT as above)
+    sqlx::query(r#"
+        INSERT INTO miner_round_stats (
+            round_id, pubkey, total_sol_deployed, total_sol_earned, total_ore_earned, won_round, net_sol_round
+        )
+        SELECT
+            d.round_id,
+            d.pubkey,
+            SUM(d.amount),
+            SUM(d.sol_earned),
+            SUM(d.ore_earned),
+            MAX(CASE WHEN d.square_id = r.winning_square THEN 1 ELSE 0 END),
+            (SUM(d.sol_earned) - SUM(d.amount))
+        FROM deployments d
+        JOIN rounds r ON r.id = d.round_id
+        WHERE d.round_id = ?
+        GROUP BY d.round_id, d.pubkey
+        ON CONFLICT(round_id, pubkey) DO UPDATE SET
+          total_sol_deployed = excluded.total_sol_deployed,
+          total_sol_earned   = excluded.total_sol_earned,
+          total_ore_earned   = excluded.total_ore_earned,
+          won_round          = excluded.won_round,
+          net_sol_round      = excluded.net_sol_round
+    "#).bind(round_id).execute(&mut *tx).await?;
+
+    // d) Add fresh contribution to totals
+    sqlx::query(r#"
+        INSERT INTO miner_totals (
+          pubkey, rounds_played, rounds_won, total_sol_deployed, total_sol_earned, total_ore_earned, net_sol_change
+        )
+        SELECT
+          s.pubkey,
+          COUNT(*),
+          SUM(s.won_round),
+          SUM(s.total_sol_deployed),
+          SUM(s.total_sol_earned),
+          SUM(s.total_ore_earned),
+          SUM(s.net_sol_round)
+        FROM miner_round_stats s
+        WHERE s.round_id = ?
+        GROUP BY s.pubkey
+        ON CONFLICT(pubkey) DO UPDATE SET
+          rounds_played      = miner_totals.rounds_played      + excluded.rounds_played,
+          rounds_won         = miner_totals.rounds_won         + excluded.rounds_won,
+          total_sol_deployed = miner_totals.total_sol_deployed + excluded.total_sol_deployed,
+          total_sol_earned   = miner_totals.total_sol_earned   + excluded.total_sol_earned,
+          total_ore_earned   = miner_totals.total_ore_earned   + excluded.total_ore_earned,
+          net_sol_change     = miner_totals.net_sol_change     + excluded.net_sol_change
+    "#).bind(round_id).execute(&mut *tx).await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 
 pub async fn get_available_pubkeys(pool: &Pool<Sqlite>, limit: String) -> Result<Vec<String>, sqlx::Error> {
     Ok(vec![])

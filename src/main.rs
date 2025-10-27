@@ -14,7 +14,7 @@ use steel::{AccountDeserialize, Pubkey};
 use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::update_data_system};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system}};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -124,6 +124,8 @@ async fn main() -> anyhow::Result<()> {
     ).await {
         for miner_data in miners_data_raw {
             if let Ok(miner) = Miner::try_from_bytes(&miner_data.1.data) {
+                let mut miner = miner.clone();
+                miner.refined_ore = infer_refined_ore(&miner, &treasury);
                 miners.push(miner.clone().into());
             }
         }
@@ -370,7 +372,8 @@ async fn get_leaderboard(
 ) -> Result<Json<Vec<MinerLeaderboardRow>>, AppError> {
     let limit = p.limit.unwrap_or(100).clamp(1, 2000);
     let offset = p.offset.unwrap_or(0).max(0);
-    let rows = database::get_leaderboard_last_60_rounds(&state.db_pool, limit, offset).await?;
+    let rounds = 60;
+    let rows = database::get_leaderboard_last_n_rounds(&state.db_pool, rounds, limit, offset).await?;
     Ok(Json(rows))
 }
 

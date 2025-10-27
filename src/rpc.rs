@@ -6,8 +6,9 @@ use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterType};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize, Numeric, Pubkey};
+use tokio::time::Instant;
 
-use crate::{app_state::{AppMiner, AppState}, database::{insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
+use crate::{app_state::{AppMiner, AppState}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
 
 pub struct MinerSnapshot {
     round_id: u64,
@@ -145,6 +146,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                 board_snapshot = false;
                 tracing::info!("Checking miner snapshot status: {}", miners_snapshot.completed);
                 if !miners_snapshot.completed {
+                    let r_now = Instant::now();
                     tracing::info!("Performing snapshot and updating round");
                     // load previous round
                     let round_id = board.round_id - 1;
@@ -354,6 +356,13 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         if let Err(e) = insert_treasury(&db_pool, &CreateTreasury::from(treasury)).await {
                             tracing::error!("Failed to insert treasury: {:?}", e);
                         }
+
+
+                        if let Err(e) = database::finalize_round_idempotent(&db_pool, round.id as i64).await {
+                            tracing::error!("Failed to finalize for round: {:?}", e);
+                        }
+
+                        tracing::info!("Successfully snapshot round and updated database in {}ms", r_now.elapsed().as_millis());
                         miners_snapshot.completed = true;
                     }
                 }
@@ -374,7 +383,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
     });
 }
 
-fn infer_refined_ore(miner: &Miner, treasury: &Treasury) -> u64 {
+pub fn infer_refined_ore(miner: &Miner, treasury: &Treasury) -> u64 {
     let delta = treasury.miner_rewards_factor - miner.rewards_factor;
     if delta < Numeric::ZERO {
         // Defensive: shouldn't happen, but keep behavior sane.
