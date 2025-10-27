@@ -719,76 +719,60 @@ pub struct MinerEarnings24h {
 
 pub async fn get_miner_earnings_24h(
     pool: &Pool<Sqlite>,
-    pubkey: &str,
+    pubkey: String,
 ) -> Result<Option<MinerEarnings24h>, sqlx::Error> {
-    // This SQL:
-    //  - gets the latest snapshot for the pubkey
-    //  - gets the snapshot closest to exactly now-24h
-    //
-    // Note: created_at is RFC3339. SQLite's strftime('%s', ...) can parse standard ISO8601/RFC3339 timestamps.
-    // If your stored format deviates, you may need to normalize it on insert or cast in the query.
-    let row = sqlx::query!(
+    // Get the latest snapshot
+    let latest: Option<DbMinerSnapshot> = sqlx::query_as::<_, DbMinerSnapshot>(
         r#"
-        WITH params AS (
-          SELECT ?1 AS pubkey,
-                 strftime('%s','now') AS now_s,
-                 strftime('%s','now','-24 hours') AS since_s
-        ),
-        latest AS (
-          SELECT id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
-          FROM miner_snapshots
-          WHERE pubkey = (SELECT pubkey FROM params)
-          ORDER BY created_at DESC
-          LIMIT 1
-        ),
-        start AS (
-          -- pick the snapshot *closest* to exactly 24h ago
-          SELECT id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
-          FROM miner_snapshots
-          WHERE pubkey = (SELECT pubkey FROM params)
-          ORDER BY ABS(strftime('%s', created_at) - (SELECT since_s FROM params))
-          LIMIT 1
-        )
-        SELECT
-          l.pubkey                                     AS "pubkey!: String",
-          s.created_at                                 AS "start_created_at!: String",
-          l.created_at                                 AS "end_created_at!: String",
-          s.unclaimed_ore                              AS "unclaimed_start!: i64",
-          l.unclaimed_ore                              AS "unclaimed_end!: i64",
-          s.refined_ore                                AS "refined_start!: i64",
-          l.refined_ore                                AS "refined_end!: i64"
-        FROM latest l
-        JOIN start  s ON s.pubkey = l.pubkey
+        SELECT id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
+        FROM miner_snapshots
+        WHERE pubkey = ?
+        ORDER BY created_at DESC
+        LIMIT 1
         "#
-        ,
-        pubkey
     )
+    .bind(&pubkey)
     .fetch_optional(pool)
     .await?;
 
-    if let Some(r) = row {
-        let unclaimed_delta = r.unclaimed_end - r.unclaimed_start;
-        let refined_delta   = r.refined_end   - r.refined_start;
+    let latest = match latest {
+        Some(s) => s,
+        None => return Ok(None), // no data for pubkey
+    };
 
-        // Define "% earnings" as refined earned over the last 24h divided by
-        // unclaimed at the start of the 24h window.
-        let denom = if r.unclaimed_start <= 0 { 1.0 } else { r.unclaimed_start as f64 };
-        let pct_earnings = (refined_delta as f64 / denom) * 100.0;
+    // Get snapshot closest to 24h ago
+    let start: Option<DbMinerSnapshot> = sqlx::query_as::<_, DbMinerSnapshot>(
+        r#"
+        SELECT id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
+        FROM miner_snapshots
+        WHERE pubkey = ?
+        ORDER BY ABS(strftime('%s', created_at) - strftime('%s','now','-24 hours'))
+        LIMIT 1
+        "#
+    )
+    .bind(&pubkey)
+    .fetch_optional(pool)
+    .await?;
 
-        Ok(Some(MinerEarnings24h {
-            pubkey: r.pubkey,
-            window_start: r.start_created_at,
-            window_end: r.end_created_at,
-            unclaimed_start: r.unclaimed_start,
-            unclaimed_end: r.unclaimed_end,
-            refined_start: r.refined_start,
-            refined_end: r.refined_end,
-            unclaimed_delta,
-            refined_delta,
-            pct_earnings,
-        }))
-    } else {
-        // No snapshots for this pubkey
-        Ok(None)
-    }
+    let start = start.unwrap_or(latest.clone()); // if no 24h snapshot, fallback to latest
+
+    let unclaimed_delta = latest.unclaimed_ore - start.unclaimed_ore;
+    let refined_delta = latest.refined_ore - start.refined_ore;
+
+    let denom = if start.unclaimed_ore <= 0 { 1.0 } else { start.unclaimed_ore as f64 };
+    let pct_earnings = (refined_delta as f64 / denom) * 100.0;
+
+    Ok(Some(MinerEarnings24h {
+        pubkey,
+        window_start: start.created_at,
+        window_end: latest.created_at,
+        unclaimed_start: start.unclaimed_ore,
+        unclaimed_end: latest.unclaimed_ore,
+        refined_start: start.refined_ore,
+        refined_end: latest.refined_ore,
+        unclaimed_delta,
+        refined_delta,
+        pct_earnings,
+    }))
 }
+

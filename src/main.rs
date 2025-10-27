@@ -450,14 +450,12 @@ async fn get_miner_earnings(
     State(state): State<AppState>,
     Path(pubkey): Path<String>,
 ) -> Result<Json<Option<MinerEarnings24h>>, AppError> {
-    let pubkey = if let Ok(p) = Pubkey::from_str(&pubkey) {
-        let earnings = database::get_miner_earnings_24h(&state.db_pool, &p.to_string()).await?;
+    if let Ok(p) = Pubkey::from_str(&pubkey) {
+        let earnings = database::get_miner_earnings_24h(&state.db_pool, p.to_string()).await?;
         return Ok(Json(earnings))
     } else {
         return Ok(Json(None))
     };
-
-    Ok(Json(None))
 }
 
 async fn get_available_pubkeys(
