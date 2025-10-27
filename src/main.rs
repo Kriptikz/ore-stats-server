@@ -164,10 +164,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/miner/totals/ore", get(get_miner_totals_ore))
         .route("/leaderboard", get(get_leaderboard))
         .route("/leaderboard/ore", get(get_leaderboard_ore))
-        .route("/leaderboard/latest-rounds", get(get_leaderboard))
-        .route("/leaderboard/latest-rounds/ore", get(get_leaderboard_ore))
-        .route("/leaderboard/all-time", get(get_miner_totals))
-        .route("/leaderboard/all-time/ore", get(get_miner_totals_ore))
+        .route("/leaderboard/latest-rounds", get(get_leaderboard_latest_rounds))
+        .route("/leaderboard/latest-rounds/ore", get(get_leaderboard_latest_rounds_ore))
+        .route("/leaderboard/all-time", get(get_leaderboard_all_time))
+        .route("/leaderboard/all-time/ore", get(get_leaderboard_all_time_ore))
         .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
@@ -370,6 +370,16 @@ async fn get_miner_totals(
     Ok(Json(rows))
 }
 
+async fn get_leaderboard_all_time(
+    State(state): State<AppState>,
+    Query(p): Query<Pagination>,
+) -> Result<Json<Vec<MinerTotalsRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let rows = database::get_miner_totals_all_time_v2(&state.db_pool, limit, offset).await?;
+    Ok(Json(rows))
+}
+
 async fn get_leaderboard(
     State(state): State<AppState>,
     Query(p): Query<Pagination>,
@@ -378,6 +388,17 @@ async fn get_leaderboard(
     let offset = p.offset.unwrap_or(0).max(0);
     let rounds = 60;
     let rows = database::get_leaderboard_last_n_rounds(&state.db_pool, rounds, limit, offset).await?;
+    Ok(Json(rows))
+}
+
+async fn get_leaderboard_latest_rounds(
+    State(state): State<AppState>,
+    Query(p): Query<Pagination>,
+) -> Result<Json<Vec<MinerLeaderboardRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let rounds = 60;
+    let rows = database::get_leaderboard_last_n_rounds_v2(&state.db_pool, rounds, limit, offset).await?;
     Ok(Json(rows))
 }
 
@@ -398,6 +419,16 @@ async fn get_miner_totals_ore(
     Ok(Json(rows))
 }
 
+async fn get_leaderboard_all_time_ore(
+    State(state): State<AppState>,
+    Query(q): Query<OreLeaderboardQuery>,
+) -> Result<Json<Vec<MinerOreLeaderboardRow>>, AppError> {
+    let limit  = q.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = q.offset.unwrap_or(0).max(0);
+    let rows =  database::get_ore_leaderboard_all_time_v2(&state.db_pool, limit, offset).await?;
+    Ok(Json(rows))
+}
+
 async fn get_leaderboard_ore(
     State(state): State<AppState>,
     Query(p): Query<Pagination>,
@@ -405,6 +436,16 @@ async fn get_leaderboard_ore(
     let limit = p.limit.unwrap_or(100).clamp(1, 2000);
     let offset = p.offset.unwrap_or(0).max(0);
     let rows = database::get_ore_leaderboard_last_n_rounds(&state.db_pool, 60, limit, offset).await?;
+    Ok(Json(rows))
+}
+
+async fn get_leaderboard_latest_rounds_ore(
+    State(state): State<AppState>,
+    Query(p): Query<Pagination>,
+) -> Result<Json<Vec<MinerOreLeaderboardRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).clamp(1, 2000);
+    let offset = p.offset.unwrap_or(0).max(0);
+    let rows = database::get_ore_leaderboard_last_n_rounds_v2(&state.db_pool, 60, limit, offset).await?;
     Ok(Json(rows))
 }
 

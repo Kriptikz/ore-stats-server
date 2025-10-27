@@ -809,3 +809,157 @@ pub async fn get_ore_leaderboard_last_n_rounds(
     .await?;
     Ok(rows)
 }
+
+
+pub async fn get_miner_totals_all_time_v2(
+    pool: &sqlx::SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<MinerTotalsRow>> {
+    let rows = sqlx::query_as::<_, MinerTotalsRow>(r#"
+        SELECT
+          pubkey,
+          rounds_played,
+          rounds_won,
+          total_sol_deployed,
+          total_sol_earned,
+          total_ore_earned,
+          net_sol_change,
+          CASE
+            WHEN net_sol_change > 0 THEN 'up'
+            WHEN net_sol_change < 0 THEN 'down'
+            ELSE 'flat'
+          END AS sol_balance_direction
+        FROM miner_totals
+        WHERE rounds_played >= 100
+        ORDER BY net_sol_change DESC
+        LIMIT ? OFFSET ?;
+    "#)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn get_ore_leaderboard_all_time_v2(
+    pool: &sqlx::SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<MinerOreLeaderboardRow>> {
+    let rows = sqlx::query_as::<_, MinerOreLeaderboardRow>(r#"
+        SELECT
+          ROW_NUMBER() OVER (ORDER BY total_ore_earned DESC, total_sol_earned DESC) AS rank,
+          pubkey,
+          rounds_played,
+          rounds_won,
+          total_sol_deployed,
+          total_sol_earned,
+          total_ore_earned,
+          net_sol_change
+        FROM miner_totals
+        WHERE rounds_played >= 100
+        ORDER BY rank
+        LIMIT ? OFFSET ?;
+    "#)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+
+pub async fn get_leaderboard_last_n_rounds_v2(
+    pool: &sqlx::SqlitePool,
+    n_rounds: i64,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<MinerLeaderboardRow>> {
+    let rows = sqlx::query_as::<_, MinerLeaderboardRow>(r#"
+        WITH last_n AS (
+          SELECT id FROM rounds ORDER BY id DESC LIMIT ?
+        ),
+        agg AS (
+          SELECT
+            s.pubkey,
+            COUNT(*)                         AS rounds_played,
+            SUM(s.won_round)                 AS rounds_won,
+            SUM(s.total_sol_deployed)        AS total_sol_deployed,
+            SUM(s.total_sol_earned)          AS total_sol_earned,
+            SUM(s.total_ore_earned)          AS total_ore_earned,
+            SUM(s.net_sol_round)             AS net_sol_change
+          FROM miner_round_stats s
+          JOIN last_n r ON r.id = s.round_id
+          GROUP BY s.pubkey
+        )
+        SELECT
+          ROW_NUMBER() OVER (ORDER BY net_sol_change DESC) AS rank,
+          pubkey,
+          rounds_played,
+          rounds_won,
+          total_sol_deployed,
+          total_sol_earned,
+          total_ore_earned,
+          net_sol_change,
+          CASE
+            WHEN net_sol_change > 0 THEN 'up'
+            WHEN net_sol_change < 0 THEN 'down'
+            ELSE 'flat'
+          END AS sol_balance_direction
+        FROM agg
+        ORDER BY rank
+        LIMIT ? OFFSET ?;
+    "#)
+    .bind(n_rounds.max(1))
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn get_ore_leaderboard_last_n_rounds_v2(
+    pool: &sqlx::SqlitePool,
+    n_rounds: i64,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<MinerOreLeaderboardRow>> {
+    let rows = sqlx::query_as::<_, MinerOreLeaderboardRow>(r#"
+        WITH last_n AS (
+          SELECT id FROM rounds ORDER BY id DESC LIMIT ?
+        ),
+        agg AS (
+          SELECT
+            s.pubkey,
+            COUNT(*)                  AS rounds_played,
+            SUM(s.won_round)          AS rounds_won,
+            SUM(s.total_sol_deployed) AS total_sol_deployed,
+            SUM(s.total_sol_earned)   AS total_sol_earned,
+            SUM(s.total_ore_earned)   AS total_ore_earned,
+            SUM(s.net_sol_round)      AS net_sol_change
+          FROM miner_round_stats s
+          JOIN last_n r ON r.id = s.round_id
+          GROUP BY s.pubkey
+        )
+        SELECT
+          ROW_NUMBER() OVER (ORDER BY total_ore_earned DESC, total_sol_earned DESC) AS rank,
+          pubkey,
+          rounds_played,
+          rounds_won,
+          total_sol_deployed,
+          total_sol_earned,
+          total_ore_earned,
+          net_sol_change
+        FROM agg
+        ORDER BY rank
+        LIMIT ? OFFSET ?;
+    "#)
+    .bind(n_rounds.max(1))
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
