@@ -14,7 +14,7 @@ use steel::{AccountDeserialize, Pubkey};
 use tokio::{signal, sync::{Mutex, RwLock}};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::update_data_system};
+use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerEarnings24h, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::update_data_system};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -154,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/treasuries", get(get_treasuries))
         .route("/search/pubkey/{letters}", get(get_available_pubkeys))
         .route("/miner/latest/{pubkey}", get(get_miner_latest))
+        .route("/miner/earnings/{pubkey}", get(get_miner_earnings))
         .route("/miner/{pubkey}", get(get_miner_history))
         .route("/miner/rounds/{pubkey}", get(get_miner_rounds))
         .route("/miner/stats/{pubkey}", get(get_miner_stats))
@@ -442,6 +443,20 @@ async fn get_miner_latest(
             }
         }
     }
+    Ok(Json(None))
+}
+
+async fn get_miner_earnings(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Result<Json<Option<MinerEarnings24h>>, AppError> {
+    let pubkey = if let Ok(p) = Pubkey::from_str(&pubkey) {
+        let earnings = database::get_miner_earnings_24h(&state.db_pool, &p.to_string()).await?;
+        return Ok(Json(earnings))
+    } else {
+        return Ok(Json(None))
+    };
+
     Ok(Json(None))
 }
 
