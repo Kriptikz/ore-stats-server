@@ -703,76 +703,27 @@ pub async fn get_available_pubkeys(pool: &Pool<Sqlite>, limit: String) -> Result
     Ok(vec![])
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, sqlx::FromRow)]
-pub struct MinerEarnings24h {
-    pub pubkey: String,
-    pub window_start: String, // snapshot chosen as ~24h ago
-    pub window_end: String,   // latest snapshot
-    pub unclaimed_start: i64,
-    pub unclaimed_end: i64,
-    pub refined_start: i64,
-    pub refined_end: i64,
-    pub unclaimed_delta: i64,
-    pub refined_delta: i64,
-    pub pct_earnings: f64, // refined_delta / unclaimed_start * 100
-}
-
-pub async fn get_miner_earnings_24h(
+pub async fn get_snapshot_24h_ago(
     pool: &Pool<Sqlite>,
     pubkey: String,
-) -> Result<Option<MinerEarnings24h>, sqlx::Error> {
-    // Get the latest snapshot
-    let latest: Option<DbMinerSnapshot> = sqlx::query_as::<_, DbMinerSnapshot>(
+) -> Result<Option<DbMinerSnapshot>, sqlx::Error> {
+    // Find the snapshot closest to exactly 24 hours ago from *right now*
+    let snapshot_24h: Option<DbMinerSnapshot> = sqlx::query_as::<_, DbMinerSnapshot>(
         r#"
-        SELECT id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
+        SELECT
+            id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
         FROM miner_snapshots
         WHERE pubkey = ?
-        ORDER BY created_at DESC
+        ORDER BY ABS(
+            strftime('%s', created_at) -
+            strftime('%s','now','-24 hours')
+        )
         LIMIT 1
         "#
     )
-    .bind(&pubkey)
+    .bind(pubkey)
     .fetch_optional(pool)
     .await?;
 
-    let latest = match latest {
-        Some(s) => s,
-        None => return Ok(None), // no data for pubkey
-    };
-
-    // Get snapshot closest to 24h ago
-    let start: Option<DbMinerSnapshot> = sqlx::query_as::<_, DbMinerSnapshot>(
-        r#"
-        SELECT id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
-        FROM miner_snapshots
-        WHERE pubkey = ?
-        ORDER BY ABS(strftime('%s', created_at) - strftime('%s','now','-24 hours'))
-        LIMIT 1
-        "#
-    )
-    .bind(&pubkey)
-    .fetch_optional(pool)
-    .await?;
-
-    let start = start.unwrap_or(latest.clone()); // if no 24h snapshot, fallback to latest
-
-    let unclaimed_delta = latest.unclaimed_ore - start.unclaimed_ore;
-    let refined_delta = latest.refined_ore - start.refined_ore;
-
-    let denom = if start.unclaimed_ore <= 0 { 1.0 } else { start.unclaimed_ore as f64 };
-    let pct_earnings = (refined_delta as f64 / denom) * 100.0;
-
-    Ok(Some(MinerEarnings24h {
-        pubkey,
-        window_start: start.created_at,
-        window_end: latest.created_at,
-        unclaimed_start: start.unclaimed_ore,
-        unclaimed_end: latest.unclaimed_ore,
-        refined_start: start.refined_ore,
-        refined_end: latest.refined_ore,
-        unclaimed_delta,
-        refined_delta,
-        pct_earnings,
-    }))
+    Ok(snapshot_24h)
 }
-
