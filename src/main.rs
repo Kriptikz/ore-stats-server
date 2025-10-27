@@ -164,6 +164,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/miner/totals/ore", get(get_miner_totals_ore))
         .route("/leaderboard", get(get_leaderboard))
         .route("/leaderboard/ore", get(get_leaderboard_ore))
+        .route("/leaderboard/latest-rounds", get(get_leaderboard))
+        .route("/leaderboard/latest-rounds/ore", get(get_leaderboard_ore))
+        .route("/leaderboard/all-time", get(get_miner_totals))
+        .route("/leaderboard/all-time/ore", get(get_miner_totals_ore))
         .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
