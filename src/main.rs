@@ -152,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/deployments", get(get_deployments))
         .route("/rounds", get(get_rounds))
         .route("/treasuries", get(get_treasuries))
+        .route("/search/pubkey/{letters}", get(get_available_pubkeys))
         .route("/miner/latest/{pubkey}", get(get_miner_latest))
         .route("/miner/{pubkey}", get(get_miner_history))
         .route("/miner/rounds/{pubkey}", get(get_miner_rounds))
@@ -172,6 +173,7 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
 
 async fn log_request_time(
     req: Request<Body>,
@@ -441,6 +443,14 @@ async fn get_miner_latest(
         }
     }
     Ok(Json(None))
+}
+
+async fn get_available_pubkeys(
+    State(state): State<AppState>,
+    Path(letters): Path<String>,
+) -> Result<Json<Vec<String>>, AppError> {
+    let pubkeys = database::get_available_pubkeys(&state.db_pool, letters).await?;
+    return Ok(Json(pubkeys))
 }
 
 #[derive(Error, Debug)]

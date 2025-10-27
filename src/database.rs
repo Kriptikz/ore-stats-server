@@ -699,4 +699,6 @@ pub async fn get_miner_stats(
     Ok(row)
 }
 
-
+pub async fn get_available_pubkeys(pool: &Pool<Sqlite>, limit: String) -> Result<Vec<String>, sqlx::Error> {
+    Ok(vec![])
+}
