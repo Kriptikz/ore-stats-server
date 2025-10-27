@@ -11,7 +11,7 @@ pub struct CreateMinerSnapshot {
     pub refined_ore: i64,
     pub lifetime_sol: i64,
     pub lifetime_ore: i64,
-    pub created_at: String, // RFC3339
+    pub created_at: i64,
 }
 
 impl From<AppMiner> for CreateMinerSnapshot {
@@ -22,7 +22,7 @@ impl From<AppMiner> for CreateMinerSnapshot {
             refined_ore: r.refined_ore as i64,
             lifetime_sol: r.lifetime_rewards_sol as i64,
             lifetime_ore: r.lifetime_rewards_ore as i64,
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: chrono::Utc::now().timestamp(),
         }
     }
 }
@@ -35,7 +35,7 @@ pub struct DbMinerSnapshot {
     pub refined_ore: i64,
     pub lifetime_sol: i64,
     pub lifetime_ore: i64,
-    pub created_at: String, // RFC3339
+    pub created_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -595,8 +595,6 @@ pub async fn get_ore_leaderboard_all_time(
     Ok(rows)
 }
 
-
-
 pub async fn get_ore_leaderboard_last_n_rounds(
     pool: &sqlx::SqlitePool,
     n_rounds: i64,
@@ -707,23 +705,24 @@ pub async fn get_snapshot_24h_ago(
     pool: &Pool<Sqlite>,
     pubkey: String,
 ) -> Result<Option<DbMinerSnapshot>, sqlx::Error> {
-    // Find the snapshot closest to exactly 24 hours ago from *right now*
-    let snapshot_24h: Option<DbMinerSnapshot> = sqlx::query_as::<_, DbMinerSnapshot>(
+    // target = now - 24h (seconds)
+    // narrow window: ±15 minutes is plenty for 60–90s cadence
+    let rows: Vec<DbMinerSnapshot> = sqlx::query_as::<_, DbMinerSnapshot>(
         r#"
-        SELECT
-            id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
-        FROM miner_snapshots
+        WITH target(ts) AS (SELECT strftime('%s','now','-24 hours'))
+        SELECT id, pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
+        FROM miner_snapshots, target
         WHERE pubkey = ?
-        ORDER BY ABS(
-            strftime('%s', created_at) -
-            strftime('%s','now','-24 hours')
-        )
+          AND created_at BETWEEN (ts - 900) AND (ts + 900)
+        ORDER BY ABS(created_at - ts)
         LIMIT 1
         "#
     )
-    .bind(pubkey)
-    .fetch_optional(pool)
+    .bind(&pubkey)
+    .fetch_all(pool)
     .await?;
 
-    Ok(snapshot_24h)
+    Ok(rows.into_iter().next())
 }
+
+
