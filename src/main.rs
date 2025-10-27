@@ -181,10 +181,32 @@ async fn log_request_time(
     let method = req.method().to_string();
     let uri = req.uri().to_string();
 
+    // Extract IP headers forwarded by nginx
+    let headers = req.headers();
+    let real_ip = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // X-Forwarded-For may contain multiple IPs: client, proxy1, proxy2...
+    let forwarded_for = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+
     let response = next.run(req).await;
 
     let duration = start_time.elapsed();
-    tracing::info!("Request: {} {} - Duration: {:?}", method, uri, duration);
+    tracing::info!(
+        "Request: {} {} - Client IP: {} - Forwarded For: {} - Duration: {:?}",
+        method,
+        uri,
+        real_ip,
+        forwarded_for,
+        duration
+    );
 
     Ok(response)
 }
