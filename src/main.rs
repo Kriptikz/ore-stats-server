@@ -150,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/treasury", get(get_treasury))
         .route("/board", get(get_board))
         .route("/round", get(get_round))
+        .route("/round/{round_id}", get(get_round_by_id))
         .route("/miners", get(get_miners))
         .route("/deployments", get(get_deployments))
         .route("/rounds", get(get_rounds))
@@ -290,6 +291,15 @@ async fn get_round(
     } else {
         Err(anyhow!("Failed to get last round").into())
     }
+}
+
+async fn get_round_by_id(
+    Path(p): Path<i64>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<RoundRow>>, AppError> {
+    let round = database::get_round_by_id(&state.db_pool, p).await?;
+
+    Ok(Json(round))
 }
 
 #[derive(Debug, Deserialize)]
