@@ -359,6 +359,7 @@ pub async fn get_deployments_by_round(
 }
 
 pub async fn insert_miner_snapshots(pool: &Pool<Sqlite>, rows: &[CreateMinerSnapshot]) -> Result<(), sqlx::Error> {
+    tracing::info!("Inserting snapshots");
     let mut tx = pool.begin().await?;
 
     for d in rows {

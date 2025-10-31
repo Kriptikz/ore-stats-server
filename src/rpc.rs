@@ -207,6 +207,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         if let Err(e) = insert_treasury(&db_pool, &CreateTreasury::from(treasury)).await {
                             tracing::error!("Failed to insert treasury: {:?}", e);
                         }
+                        miners_snapshot.completed = true;
                         continue;
                     } else {
                         // process round data
