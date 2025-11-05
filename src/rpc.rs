@@ -3,10 +3,11 @@ use std::{str::FromStr, time::Duration};
 
 use ore_api::{consts::{SPLIT_ADDRESS, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use solana_account_decoder_client_types::UiAccountEncoding;
-use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterType};
+use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::RpcAccountInfoConfig, rpc_filter::RpcFilterType};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize, Numeric, Pubkey};
 use tokio::time::Instant;
+use tokio_stream::StreamExt;
 
 use crate::{app_state::{AppMiner, AppState}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
 
@@ -406,4 +407,47 @@ pub fn refinement_level_percent(refined_ore: f64, unclaimed_ore: f64) -> f64 {
     }
 }
 
+pub fn watch_live_board(rpc_url: &str, app_state: AppState) {
+    let (reset_sig_sender, mut reset_sig_reciever) =
+        tokio::sync::mpsc::unbounded_channel::<String>();
+    let prefix = "ws://".to_string();
+    let url = prefix + rpc_url;
+    //let http_url = "https://".to_string() + rpc_url;
+    tokio::spawn(async move {
+        loop {
+            if let Ok(ps_client) = PubsubClient::new(&url).await {
+                let account_info_config = RpcAccountInfoConfig {
+                    encoding: Some(UiAccountEncoding::Base64),
+                    data_slice: None,
+                    commitment: Some(CommitmentConfig { commitment: CommitmentLevel::Processed }),
+                    min_context_slot: None,
+                };
+                let config = solana_client::rpc_config::RpcProgramAccountsConfig {
+                    filters: None,
+                    account_config: account_info_config,
+                    with_context: Some(true),
+                    sort_results: None,
+                };
+                if let Ok((mut accounts_stream, accounts_stream_unsub)) = ps_client.program_subscribe(&ore_api::id(), Some(config)).await {
+                    while let Some(account_data) = accounts_stream.next().await {
+                        let data_ctx = account_data.context;
+                        if let Some(data) = account_data.value.account.data.decode() {
+                            if let Ok(data) = ore_api::state::Miner::try_from_bytes(&data) {
+                                println!("Slot: {}, Miner Data: {:?}", data_ctx.slot, data);
+                            }
+                        }
+                    }
+
+                    accounts_stream_unsub().await;
+                    println!("Unsubbed Successfully!");
+                } else {
+                    println!("Failed to subscribe to program");
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                }
+            }
+        }
+    });
+
+    ()
+}
 
