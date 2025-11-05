@@ -9,7 +9,7 @@ use steel::{AccountDeserialize, Numeric, Pubkey};
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-use crate::{app_state::{AppMiner, AppState}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
+use crate::{app_state::{AppLiveDeployment, AppMiner, AppRound, AppState}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
 
 pub struct MinerSnapshot {
     round_id: u64,
@@ -407,7 +407,7 @@ pub fn refinement_level_percent(refined_ore: f64, unclaimed_ore: f64) -> f64 {
     }
 }
 
-pub fn watch_live_board(rpc_url: &str, app_state: AppState) {
+pub async fn watch_live_board(rpc_url: &str, app_state: AppState) {
     let (reset_sig_sender, mut reset_sig_reciever) =
         tokio::sync::mpsc::unbounded_channel::<String>();
     let prefix = "ws://".to_string();
@@ -428,12 +428,46 @@ pub fn watch_live_board(rpc_url: &str, app_state: AppState) {
                     with_context: Some(true),
                     sort_results: None,
                 };
+                let mut live_round_id = 0;
                 if let Ok((mut accounts_stream, accounts_stream_unsub)) = ps_client.program_subscribe(&ore_api::id(), Some(config)).await {
                     while let Some(account_data) = accounts_stream.next().await {
                         let data_ctx = account_data.context;
                         if let Some(data) = account_data.value.account.data.decode() {
-                            if let Ok(data) = ore_api::state::Miner::try_from_bytes(&data) {
-                                println!("Slot: {}, Miner Data: {:?}", data_ctx.slot, data);
+                            if let Ok(data) = ore_api::state::Round::try_from_bytes(&data) {
+                                if data.id > live_round_id {
+                                    live_round_id = data.id;
+                                    let mut w = app_state.live_deployments.write().await;
+                                    *w = vec![];
+                                } else if data.id == live_round_id {
+                                    // got new board data for this round
+                                    let r = AppRound::from(*data);
+                                    let mut w = app_state.live_round.write().await;
+                                    *w = r.clone();
+                                    drop(w);
+                                    if let Err(_) = app_state.live_data_broadcaster.send(crate::app_state::LiveBroadcastData::Round(r)) {
+                                        tracing::error!("Failed to broadcast live round data");
+                                    }
+                                } else {
+                                    // got an old board for some reason, maybe a checkpoint or
+                                    // something
+                                }
+                            } else if let Ok(miner) = ore_api::state::Miner::try_from_bytes(&data) {
+                                if miner.round_id == live_round_id {
+                                    let deployment_data = AppLiveDeployment {
+                                        round: miner.round_id,
+                                        slot: data_ctx.slot,
+                                        authority: miner.authority.to_string(),
+                                        deployments: miner.deployed,
+                                        total_deployed: miner.deployed.iter().sum(),
+                                    };
+                                    let mut w = app_state.live_deployments.write().await;
+                                    w.push(deployment_data.clone());
+                                    drop(w);
+                                    if let Err(_) = app_state.live_data_broadcaster.send(crate::app_state::LiveBroadcastData::Deployment(deployment_data)) {
+                                        tracing::error!("Failed to broadcast live round data");
+                                    }
+                                }
+
                             }
                         }
                     }

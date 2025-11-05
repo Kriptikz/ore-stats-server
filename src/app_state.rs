@@ -3,7 +3,22 @@ use std::sync::Arc;
 use ore_api::state::{Board, Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{broadcast, RwLock};
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AppLiveDeployment {
+    pub round: u64,
+    pub slot: u64,
+    pub authority: String,
+    pub deployments: [u64; 25],
+    pub total_deployed: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum LiveBroadcastData {
+    Round(AppRound),
+    Deployment(AppLiveDeployment),
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -12,6 +27,9 @@ pub struct AppState {
     pub staring_round: u64,
     pub rounds: Arc<RwLock<Vec<AppRound>>>,
     pub miners: Arc<RwLock<Vec<AppMiner>>>,
+    pub live_data_broadcaster: broadcast::Sender<LiveBroadcastData>,
+    pub live_round: Arc<RwLock<AppRound>>,
+    pub live_deployments: Arc<RwLock<Vec<AppLiveDeployment>>>,
     pub db_pool: Pool<Sqlite>,
 }
 

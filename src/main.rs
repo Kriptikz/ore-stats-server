@@ -1,9 +1,9 @@
-use std::{env, str::FromStr, sync::Arc, time::{Duration, Instant}};
+use std::{convert::Infallible, env, str::FromStr, sync::Arc, time::{Duration, Instant}};
 
 use anyhow::{anyhow, bail};
 use sqlx::sqlite::SqliteConnectOptions;
 use thiserror::Error;
-use axum::{body::Body, extract::{Path, Query, State}, http::{Request, Response, StatusCode}, middleware::{self, Next}, routing::get, Json, Router};
+use axum::{body::Body, extract::{Path, Query, State}, http::{Request, Response, StatusCode}, middleware::{self, Next}, response::{sse, Sse}, routing::get, Json, Router};
 use const_crypto::ed25519;
 use ore_api::{consts::{BOARD, ROUND, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use serde::{Deserialize, Serialize};
@@ -11,10 +11,11 @@ use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterType};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize, Pubkey};
-use tokio::{signal, sync::{Mutex, RwLock}};
+use tokio::{signal, sync::{broadcast, Mutex, RwLock}};
+use tokio_stream::Stream;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system}};
+use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury, LiveBroadcastData}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -107,6 +108,17 @@ async fn main() -> anyhow::Result<()> {
     };
     tokio::time::sleep(Duration::from_secs(1)).await;
 
+    let round = if let Ok(round) = connection.get_account_data(&round_pda(board.round_id).0).await {
+        if let Ok(round) = Round::try_from_bytes(&round) {
+            round.clone()
+        } else {
+            bail!("Failed to parse Round account");
+        }
+    } else {
+        bail!("Failed to load round account data");
+    };
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     let mut miners = vec![];
     if let Ok(miners_data_raw) = connection.get_program_accounts_with_config(
         &ore_api::id(),
@@ -131,17 +143,26 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let (live_broadcaster, _rx) = broadcast::channel(1000);
+
+
     let app_state = AppState {
         treasury: Arc::new(RwLock::new(treasury.into())),
         board: Arc::new(RwLock::new(board.into())),
         staring_round: board.round_id,
         rounds: Arc::new(RwLock::new(vec![])),
         miners: Arc::new(RwLock::new(miners)),
+        live_data_broadcaster: live_broadcaster,
+        live_round: Arc::new(RwLock::new(AppRound::from(round))),
+        live_deployments: Arc::new(RwLock::new(vec![])),
         db_pool,
     };
 
     let s = app_state.clone();
     update_data_system(connection, s).await;
+
+    let s = app_state.clone();
+    watch_live_board(&rpc_url, s).await;
 
     let state = app_state.clone();
 
@@ -169,6 +190,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/leaderboard/latest-rounds/ore", get(get_leaderboard_latest_rounds_ore))
         .route("/leaderboard/all-time", get(get_leaderboard_all_time))
         .route("/leaderboard/all-time/ore", get(get_leaderboard_all_time_ore))
+        .route("/sse", get(sse_handler))
+        .route("/live/round", get(get_live_round))
+        .route("/live/deployments", get(get_live_deployments))
         .layer(middleware::from_fn(log_request_time))
         .with_state(state);
 
@@ -514,6 +538,43 @@ async fn get_available_pubkeys(
 ) -> Result<Json<Vec<String>>, AppError> {
     let pubkeys = database::get_available_pubkeys(&state.db_pool, letters).await?;
     return Ok(Json(pubkeys))
+}
+
+async fn get_live_round(
+    State(state): State<AppState>,
+) -> Result<Json<AppRound>, AppError> {
+    let round = state.live_round.clone();
+    let reader = round.read().await;
+    let round = reader.clone();
+    drop(reader);
+    Ok(Json(round))
+}
+
+async fn get_live_deployments(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AppLiveDeployment>>, AppError> {
+    let deployments = state.live_deployments.clone();
+    let reader = deployments.read().await;
+    let deployments = reader.clone();
+    drop(reader);
+    Ok(Json(deployments))
+}
+
+async fn sse_handler(
+    State(app_state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<sse::Event, Infallible>>> {
+    let mut rx_broadcast = app_state.live_data_broadcaster.subscribe();
+
+    let stream = async_stream::stream! {
+        while let Ok(msg) = rx_broadcast.recv().await {
+            // Create an SSE event with the message data
+            if let Ok(msg) = serde_json::to_string(&msg) {
+                yield Ok(sse::Event::default().data(msg));
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(sse::KeepAlive::default())
 }
 
 #[derive(Error, Debug)]
