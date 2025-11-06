@@ -15,7 +15,7 @@ use tokio::{signal, sync::{broadcast, Mutex, RwLock}};
 use tokio_stream::Stream;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury, LiveBroadcastData}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
+use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury, LiveBroadcastData, WinningSquare}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };

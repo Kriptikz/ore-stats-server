@@ -4,12 +4,12 @@ use std::{str::FromStr, time::Duration};
 use ore_api::{consts::{SPLIT_ADDRESS, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
 use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::RpcAccountInfoConfig, rpc_filter::RpcFilterType};
-use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
+use solana_sdk::{commitment_config::{CommitmentConfig, CommitmentLevel}, slot_hashes::SlotHashes};
 use steel::{AccountDeserialize, Numeric, Pubkey};
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-use crate::{app_state::{AppLiveDeployment, AppMiner, AppRound, AppState}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
+use crate::{app_state::{AppLiveDeployment, AppMiner, AppRound, AppState, AppWinningSquare, WinningSquare}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
 
 pub struct MinerSnapshot {
     round_id: u64,
@@ -100,6 +100,36 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue
                     };
+
+
+                    let possible_round = round.clone();
+                    match connection.get_account_data(&Pubkey::from_str("SysvarS1otHashes111111111111111111111111111").unwrap()).await {
+                        Ok(data) => {
+                            let slot_hashes =
+                                bincode::deserialize::<SlotHashes>(&data).unwrap();
+                            if let Some(slot_hash) = slot_hashes.get(&board.end_slot) {
+                                possible_round.slot_hash = slot_hash.to_bytes();
+                            } else {
+                                // If reset is not called within ~2.5 minutes of the block ending,
+                                // then the slot hash will be unavailable and secure hashes cannot be generated.
+                                println!("\nFailed to get slothash\n");
+                            };
+                        },
+                        Err(_e) => {
+                            println!("Failed to get block at slot {}", board.end_slot);
+                        }
+                    }
+                    if let Some(r) = possible_round.rng() {
+                        let winning_square = possible_round.winning_square(r);
+                        let wsd = AppWinningSquare {
+                            round_id: possible_round.id,
+                            winning_square,
+                        };
+                        if let Err(_) = app_state.live_data_broadcaster.send(crate::app_state::LiveBroadcastData::WinningSquare(wsd)) {
+                            tracing::error!("Failed to broadcast winning square data");
+                        }
+                    }
+
 
                     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -408,8 +438,6 @@ pub fn refinement_level_percent(refined_ore: f64, unclaimed_ore: f64) -> f64 {
 }
 
 pub async fn watch_live_board(rpc_url: &str, app_state: AppState) {
-    let (reset_sig_sender, mut reset_sig_reciever) =
-        tokio::sync::mpsc::unbounded_channel::<String>();
     let prefix = "ws://".to_string();
     let url = prefix + rpc_url;
     //let http_url = "https://".to_string() + rpc_url;

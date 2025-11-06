@@ -18,6 +18,13 @@ pub struct AppLiveDeployment {
 pub enum LiveBroadcastData {
     Round(AppRound),
     Deployment(AppLiveDeployment),
+    WinningSquare(AppWinningSquare),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppWinningSquare {
+    pub round_id: u64,
+    pub winning_square: usize,
 }
 
 #[derive(Clone)]
