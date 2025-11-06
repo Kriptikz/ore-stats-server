@@ -9,7 +9,7 @@ use steel::{AccountDeserialize, Numeric, Pubkey};
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-use crate::{app_state::{AppLiveDeployment, AppMiner, AppRound, AppState, AppWinningSquare, WinningSquare}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
+use crate::{app_state::{AppLiveDeployment, AppMiner, AppRound, AppState, AppWinningSquare}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
 
 pub struct MinerSnapshot {
     round_id: u64,
@@ -102,7 +102,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                     };
 
 
-                    let possible_round = round.clone();
+                    let mut possible_round = round.clone();
                     match connection.get_account_data(&Pubkey::from_str("SysvarS1otHashes111111111111111111111111111").unwrap()).await {
                         Ok(data) => {
                             let slot_hashes =
@@ -116,7 +116,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                             };
                         },
                         Err(_e) => {
-                            println!("Failed to get block at slot {}", board.end_slot);
+                            println!("Failed to get slothash for slot {}", board.end_slot);
                         }
                     }
                     if let Some(r) = possible_round.rng() {

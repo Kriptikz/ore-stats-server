@@ -11,11 +11,11 @@ use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_filter::RpcFilterType};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize, Pubkey};
-use tokio::{signal, sync::{broadcast, Mutex, RwLock}};
+use tokio::{signal, sync::{broadcast, RwLock}};
 use tokio_stream::Stream;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury, LiveBroadcastData, WinningSquare}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
+use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -201,7 +201,8 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::debug!("Listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
+    //axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
