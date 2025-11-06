@@ -447,7 +447,7 @@ pub async fn watch_live_board(rpc_url: &str, app_state: AppState) {
                 let account_info_config = RpcAccountInfoConfig {
                     encoding: Some(UiAccountEncoding::Base64),
                     data_slice: None,
-                    commitment: Some(CommitmentConfig { commitment: CommitmentLevel::Processed }),
+                    commitment: Some(CommitmentConfig { commitment: CommitmentLevel::Confirmed }),
                     min_context_slot: None,
                 };
                 let config = solana_client::rpc_config::RpcProgramAccountsConfig {
