@@ -337,15 +337,26 @@ pub async fn insert_deployments(pool: &Pool<Sqlite>, rows: &[CreateDeployment]) 
     tx.commit().await?;
     Ok(())
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct GetDeployment {
+    pub round_id: i64,
+    pub pubkey: String,
+    pub square_id: i64,
+    pub amount: i64,
+    pub sol_earned: i64,
+    pub ore_earned: i64,
+}
+
 pub async fn get_deployments_by_round(
     pool: &Pool<Sqlite>,
     round_id: i64,
-) -> Result<Vec<CreateDeployment>, sqlx::Error> {
-    let deployments = sqlx::query_as::<_, CreateDeployment>(
+) -> Result<Vec<GetDeployment>, sqlx::Error> {
+    let deployments = sqlx::query_as::<_, GetDeployment>(
         r#"
         SELECT
             round_id, pubkey, square_id, amount,
-            sol_earned, ore_earned, unclaimed_ore, created_at
+            sol_earned, ore_earned
         FROM deployments
         WHERE round_id = ?
         ORDER BY ore_earned DESC

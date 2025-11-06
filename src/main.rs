@@ -1,4 +1,4 @@
-use std::{convert::Infallible, env, str::FromStr, sync::Arc, time::{Duration, Instant}};
+use std::{collections::HashMap, convert::Infallible, env, str::FromStr, sync::Arc, time::{Duration, Instant}};
 
 use anyhow::{anyhow, bail};
 use sqlx::sqlite::SqliteConnectOptions;
@@ -15,7 +15,7 @@ use tokio::{signal, sync::{broadcast, RwLock}};
 use tokio_stream::Stream;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, CreateDeployment, DbMinerSnapshot, DbTreasury, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
+use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, DbMinerSnapshot, DbTreasury, GetDeployment, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -173,7 +173,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/round", get(get_round))
         .route("/round/{round_id}", get(get_round_by_id))
         .route("/miners", get(get_miners))
-        .route("/deployments", get(get_deployments))
+        .route("/deployments", get(get_deployments_old))
+        .route("/v2/deployments", get(get_deployments))
         .route("/rounds", get(get_rounds))
         .route("/treasuries", get(get_treasuries))
         .route("/search/pubkey/{letters}", get(get_available_pubkeys))
@@ -377,16 +378,65 @@ async fn get_miner_rounds(
 }
 
 #[derive(Debug, Deserialize)]
-struct RoundId {
-    round_id: u64,
+pub struct RoundId {
+    pub round_id: u64,
 }
 
-async fn get_deployments(
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetDeploymentSquished {
+    pub round_id: u64,
+    pub pubkey: String,
+    pub deployments: [u64; 25],
+    pub sol_deployed: u64,
+    pub sol_earned: u64,
+    pub ore_earned: u64,
+}
+
+pub async fn get_deployments_old(
     State(state): State<AppState>,
     Query(p): Query<RoundId>,
-) -> Result<Json<Vec<CreateDeployment>>, AppError> {
+) -> Result<Json<Vec<GetDeployment>>, AppError> {
     let deployments = get_deployments_by_round(&state.db_pool, p.round_id as i64).await?;
     Ok(Json(deployments))
+}
+
+pub async fn get_deployments(
+    State(state): State<AppState>,
+    Query(p): Query<RoundId>,
+) -> Result<Json<Vec<GetDeploymentSquished>>, AppError> {
+    // fetch the raw rows just like before
+    let deployments = get_deployments_by_round(&state.db_pool, p.round_id as i64).await?;
+
+    // group + squish
+    let mut by_pubkey: HashMap<String, GetDeploymentSquished> = HashMap::new();
+
+    for d in deployments {
+        // make sure there's an entry for this pubkey
+        let entry = by_pubkey.entry(d.pubkey.clone()).or_insert_with(|| GetDeploymentSquished {
+            round_id: d.round_id as u64,
+            pubkey: d.pubkey.clone(),
+            deployments: [0u64; 25],
+            sol_deployed: 0,
+            sol_earned: 0,
+            ore_earned: 0,
+        });
+
+        // place this deployment's amount into the correct slot
+        // assuming square_id is 0..24
+        let idx = d.square_id as usize;
+        if idx < 25 {
+            entry.deployments[idx] = d.amount as u64;
+        }
+        // accumulate totals
+        entry.sol_deployed += d.amount as u64;
+        entry.sol_earned += d.sol_earned as u64;
+        entry.ore_earned += d.ore_earned as u64;
+    }
+
+    // turn the map into a vec
+    let squished: Vec<GetDeploymentSquished> = by_pubkey.into_values().collect();
+
+    Ok(Json(squished))
 }
 
 #[derive(Debug, Deserialize)]
@@ -579,7 +629,7 @@ async fn sse_handler(
 }
 
 #[derive(Error, Debug)]
-enum AppError {
+pub enum AppError {
     #[error("not found")]
     NotFound,
     #[error(transparent)]
