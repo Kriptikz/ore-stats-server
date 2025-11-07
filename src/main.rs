@@ -15,7 +15,7 @@ use tokio::{signal, sync::{broadcast, RwLock}};
 use tokio_stream::Stream;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury}, database::{get_deployments_by_round, DbMinerSnapshot, DbTreasury, GetDeployment, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
+use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury, LiveBroadcastData}, database::{get_deployments_by_round, DbMinerSnapshot, DbTreasury, GetDeployment, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -192,6 +192,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/leaderboard/all-time", get(get_leaderboard_all_time))
         .route("/leaderboard/all-time/ore", get(get_leaderboard_all_time_ore))
         .route("/sse", get(sse_handler))
+        .route("/sse/deployments", get(sse_deployments_handler))
+        .route("/sse/rounds", get(sse_rounds_handler))
         .route("/live/round", get(get_live_round))
         .route("/live/deployments", get(get_live_deployments))
         .layer(middleware::from_fn(log_request_time))
@@ -621,6 +623,50 @@ async fn sse_handler(
             // Create an SSE event with the message data
             if let Ok(msg) = serde_json::to_string(&msg) {
                 yield Ok(sse::Event::default().data(msg));
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(sse::KeepAlive::default())
+}
+
+async fn sse_rounds_handler(
+    State(app_state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<sse::Event, Infallible>>> {
+    let mut rx_broadcast = app_state.live_data_broadcaster.subscribe();
+
+    let stream = async_stream::stream! {
+        while let Ok(msg) = rx_broadcast.recv().await {
+            // Create an SSE event with the message data
+            match msg {
+                LiveBroadcastData::Round(_) => {
+                    if let Ok(msg) = serde_json::to_string(&msg) {
+                        yield Ok(sse::Event::default().data(msg));
+                    }
+                },
+                _ => {}
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(sse::KeepAlive::default())
+}
+
+async fn sse_deployments_handler(
+    State(app_state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<sse::Event, Infallible>>> {
+    let mut rx_broadcast = app_state.live_data_broadcaster.subscribe();
+
+    let stream = async_stream::stream! {
+        while let Ok(msg) = rx_broadcast.recv().await {
+            // Create an SSE event with the message data
+            match msg {
+                LiveBroadcastData::Deployment(_) => {
+                    if let Ok(msg) = serde_json::to_string(&msg) {
+                        yield Ok(sse::Event::default().data(msg));
+                    }
+                },
+                _ => {}
             }
         }
     };
