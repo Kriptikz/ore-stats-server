@@ -1,9 +1,11 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use ore_api::state::{Board, Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
 use tokio::sync::{broadcast, RwLock};
+
+use crate::GetDeploymentSquished;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AppLiveDeployment {
@@ -27,6 +29,11 @@ pub struct AppWinningSquare {
     pub winning_square: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeploymentsCache {
+    pub item: HashMap<u64, (Vec<GetDeploymentSquished>, u64)>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub treasury: Arc<RwLock<AppTreasury>>,
@@ -38,6 +45,7 @@ pub struct AppState {
     pub live_round: Arc<RwLock<AppRound>>,
     pub live_deployments: Arc<RwLock<Vec<AppLiveDeployment>>>,
     pub db_pool: Pool<Sqlite>,
+    pub deployments_cache: Arc<RwLock<DeploymentsCache>>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

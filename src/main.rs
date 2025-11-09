@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, env, str::FromStr, sync::Arc, time::{Duration, Instant}};
+use std::{collections::HashMap, convert::Infallible, env, str::FromStr, sync::Arc, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use anyhow::{anyhow, bail};
 use sqlx::sqlite::SqliteConnectOptions;
@@ -156,6 +156,7 @@ async fn main() -> anyhow::Result<()> {
         live_data_broadcaster: live_broadcaster,
         live_round: Arc::new(RwLock::new(AppRound::from(round))),
         live_deployments: Arc::new(RwLock::new(vec![])),
+        deployments_cache: Arc::new(RwLock::new(app_state::DeploymentsCache { item: HashMap::new() })),
         db_pool,
     };
 
@@ -385,7 +386,7 @@ pub struct RoundId {
     pub round_id: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetDeploymentSquished {
     pub round_id: u64,
     pub pubkey: String,
@@ -407,39 +408,98 @@ pub async fn get_deployments(
     State(state): State<AppState>,
     Query(p): Query<RoundId>,
 ) -> Result<Json<Vec<GetDeploymentSquished>>, AppError> {
-    // fetch the raw rows just like before
-    let deployments = get_deployments_by_round(&state.db_pool, p.round_id as i64).await?;
+    let reader = state.deployments_cache.read().await;
+    let dc = reader.clone();
+    drop(reader);
 
-    // group + squish
-    let mut by_pubkey: HashMap<String, GetDeploymentSquished> = HashMap::new();
+    if let Some(data) = dc.item.get(&p.round_id) {
+        return Ok(Json(data.0.to_vec()))
+    } else {
+        let rounds = database::get_rounds(&state.db_pool, 1, 0, None).await;
+        match rounds {
+            Ok(rs) => {
+                let latest_round = rs[0].clone();
+                if (latest_round.id as u64 - p.round_id) > 10 {
+                    let deployments = get_deployments_by_round(&state.db_pool, p.round_id as i64).await?;
 
-    for d in deployments {
-        // make sure there's an entry for this pubkey
-        let entry = by_pubkey.entry(d.pubkey.clone()).or_insert_with(|| GetDeploymentSquished {
-            round_id: d.round_id as u64,
-            pubkey: d.pubkey.clone(),
-            deployments: [0u64; 25],
-            sol_deployed: 0,
-            sol_earned: 0,
-            ore_earned: 0,
-        });
+                    // group + squish
+                    let mut by_pubkey: HashMap<String, GetDeploymentSquished> = HashMap::new();
 
-        // place this deployment's amount into the correct slot
-        // assuming square_id is 0..24
-        let idx = d.square_id as usize;
-        if idx < 25 {
-            entry.deployments[idx] = d.amount as u64;
+                    for d in deployments {
+                        // make sure there's an entry for this pubkey
+                        let entry = by_pubkey.entry(d.pubkey.clone()).or_insert_with(|| GetDeploymentSquished {
+                            round_id: d.round_id as u64,
+                            pubkey: d.pubkey.clone(),
+                            deployments: [0u64; 25],
+                            sol_deployed: 0,
+                            sol_earned: 0,
+                            ore_earned: 0,
+                        });
+
+                        // place this deployment's amount into the correct slot
+                        // assuming square_id is 0..24
+                        let idx = d.square_id as usize;
+                        if idx < 25 {
+                            entry.deployments[idx] = d.amount as u64;
+                        }
+                        // accumulate totals
+                        entry.sol_deployed += d.amount as u64;
+                        entry.sol_earned += d.sol_earned as u64;
+                        entry.ore_earned += d.ore_earned as u64;
+                    }
+
+                    // turn the map into a vec
+                    let squished: Vec<GetDeploymentSquished> = by_pubkey.into_values().collect();
+                    Ok(Json(squished))
+                } else {
+                    let deployments = get_deployments_by_round(&state.db_pool, p.round_id as i64).await?;
+
+                    // group + squish
+                    let mut by_pubkey: HashMap<String, GetDeploymentSquished> = HashMap::new();
+
+                    for d in deployments {
+                        // make sure there's an entry for this pubkey
+                        let entry = by_pubkey.entry(d.pubkey.clone()).or_insert_with(|| GetDeploymentSquished {
+                            round_id: d.round_id as u64,
+                            pubkey: d.pubkey.clone(),
+                            deployments: [0u64; 25],
+                            sol_deployed: 0,
+                            sol_earned: 0,
+                            ore_earned: 0,
+                        });
+
+                        // place this deployment's amount into the correct slot
+                        // assuming square_id is 0..24
+                        let idx = d.square_id as usize;
+                        if idx < 25 {
+                            entry.deployments[idx] = d.amount as u64;
+                        }
+                        // accumulate totals
+                        entry.sol_deployed += d.amount as u64;
+                        entry.sol_earned += d.sol_earned as u64;
+                        entry.ore_earned += d.ore_earned as u64;
+                    }
+
+                    // turn the map into a vec
+                    let squished: Vec<GetDeploymentSquished> = by_pubkey.into_values().collect();
+                    let mut w = state.deployments_cache.write().await;
+                    if w.item.len() < 10 {
+                        w.item.insert(p.round_id, (squished.clone(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_else(|_| Duration::from_secs(0)).as_secs()));
+                    } else {
+                        tracing::warn!("Deployments cache max length reached, clearing cache...");
+                        w.item = HashMap::new();
+                        w.item.insert(p.round_id, (squished.clone(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_else(|_| Duration::from_secs(0)).as_secs()));
+                    }
+                    drop(w);
+
+                    Ok(Json(squished))
+                }
+            }
+            Err(e) => {
+               return Err(AppError::Sqlx(e))
+            }
         }
-        // accumulate totals
-        entry.sol_deployed += d.amount as u64;
-        entry.sol_earned += d.sol_earned as u64;
-        entry.ore_earned += d.ore_earned as u64;
     }
-
-    // turn the map into a vec
-    let squished: Vec<GetDeploymentSquished> = by_pubkey.into_values().collect();
-
-    Ok(Json(squished))
 }
 
 #[derive(Debug, Deserialize)]
