@@ -98,7 +98,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
             println!("Slots left for round: {}", slots_left_in_round);
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            if slots_left_in_round < 0 {
+            if slots_left_in_round <= 0 {
                 if !board_snapshot {
                     tracing::info!("Updating data");
                     let round = if let Ok(round) = connection.get_account_data(&round_pda(board.round_id).0).await {
@@ -156,6 +156,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                     board_snapshot = true;
                 }
                 if !emitted_winning_square {
+                    println!("Checking and Emitting for winning square");
                     if let Ok(res) = reqwest::get(&entropy_seed_api).await {
                         if let Ok(d) = res.json::<EntropyApiSeed>().await {
                             let  entropy_var = if let Ok(v) = connection.get_account_data(&ORE_VAR_ADDRESS).await {
@@ -228,6 +229,9 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                                 }
                             }
                         }
+
+                        tokio::time::sleep(Duration::from_millis(400)).await;
+                        continue;
                     } else {
                         tracing::error!("Failed to get entropy seed api data");
                         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -236,6 +240,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                 }
                 tokio::time::sleep(Duration::from_secs(5)).await;
             } else if slots_left_in_round > 0 {
+                let now = Instant::now();
                 board_snapshot = false;
                 emitted_winning_square = false;
                 tracing::info!("Checking miner snapshot status: {}", miners_snapshot.completed);
@@ -464,8 +469,9 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
 
 
 
-                let sleep_time = slots_left_in_round as u64 * 400;
-                println!("Sleeping until round is over in {} ms", sleep_time + 5000);
+                let elapsed = now.elapsed().as_millis();
+                let sleep_time = ((slots_left_in_round as u64  * 400) as u128 - elapsed) as u64;
+                println!("Sleeping until round is over in {} ms", sleep_time);
                 tokio::time::sleep(Duration::from_millis(sleep_time)).await;
             } else {
                 board_snapshot = false;
