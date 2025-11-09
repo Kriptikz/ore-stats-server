@@ -1,7 +1,8 @@
 
-use std::{str::FromStr, time::Duration};
+use std::{env, str::FromStr, time::Duration};
 
 use ore_api::{consts::{SPLIT_ADDRESS, TREASURY_ADDRESS}, state::{round_pda, Board, Miner, Round, Treasury}};
+use serde::Deserialize;
 use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::RpcAccountInfoConfig, rpc_filter::RpcFilterType};
 use solana_sdk::{commitment_config::{CommitmentConfig, CommitmentLevel}, slot_hashes::SlotHashes};
@@ -9,7 +10,7 @@ use steel::{AccountDeserialize, Numeric, Pubkey};
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-use crate::{app_state::{AppLiveDeployment, AppMiner, AppRound, AppState, AppWinningSquare}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, BOARD_ADDRESS};
+use crate::{app_state::{AppLiveDeployment, AppMiner, AppRound, AppState, AppWinningSquare}, database::{self, insert_deployments, insert_miner_snapshots, insert_round, insert_treasury, CreateDeployment, CreateMinerSnapshot, CreateTreasury, RoundRow}, entropy_api::ORE_VAR_ADDRESS, BOARD_ADDRESS};
 
 pub struct MinerSnapshot {
     round_id: u64,
@@ -17,9 +18,21 @@ pub struct MinerSnapshot {
     completed: bool,
 }
 
+#[derive(Deserialize)]
+struct EntropyApiSeed {
+    address: Vec<u8>,
+    end_slot: u64,
+    samples: u64,
+    commit: Vec<u8>,
+    seed: Vec<u8>,
+}
+
 pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
     tracing::info!("Starting update_data_system");
     let db_pool = app_state.db_pool.clone();
+
+    let entropy_seed_api = env::var("ENTROPY_SEED_API").expect("ENTROPY_SEED_API must be set");
+
     tokio::spawn(async move {
         let mut board_snapshot = false;
         let mut miners_snapshot = MinerSnapshot {
@@ -27,6 +40,7 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
             miners: vec![],
             completed: false,
         };
+        let mut emitted_winning_square = false;
         loop {
             let treasury = if let Ok(treasury) = connection.get_account_data(&TREASURY_ADDRESS).await {
                 if let Ok(treasury) = Treasury::try_from_bytes(&treasury) {
@@ -173,8 +187,89 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                     }
                     board_snapshot = true;
                 }
+                if !emitted_winning_square {
+                    if let Ok(res) = reqwest::get(&entropy_seed_api).await {
+                        if let Ok(d) = res.json::<EntropyApiSeed>().await {
+                            let  entropy_var = if let Ok(v) = connection.get_account_data(&ORE_VAR_ADDRESS).await {
+                                if let Ok(ovar) = crate::entropy_api::Var::try_from_bytes(&v) {
+                                    ovar.clone()
+                                } else {
+                                    tracing::error!("Failed to parse Var account");
+                                    tokio::time::sleep(Duration::from_secs(1)).await;
+                                    continue
+                                }
+                            } else {
+                                tracing::error!("Failed to load var account data");
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                continue
+                            };
+                            if d.commit != entropy_var.commit {
+                                tracing::info!("Missmatching commits..trying again..");
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                continue
+                            }
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            match connection.get_account_data(&Pubkey::from_str("SysvarS1otHashes111111111111111111111111111").unwrap()).await {
+                                Ok(data) => {
+                                    let slot_hashes =
+                                        bincode::deserialize::<SlotHashes>(&data).unwrap();
+                                    if let Some(slot_hash) = slot_hashes.get(&entropy_var.end_at) {
+                                        let s_hash =
+                                            solana_program::keccak::hashv(&[&slot_hash.to_bytes(), &d.seed, &entropy_var.samples.to_le_bytes()])
+                                                .to_bytes();
+                                        tokio::time::sleep(Duration::from_millis(200)).await;
+                                        let mut round = if let Ok(round) = connection.get_account_data(&round_pda(board.round_id).0).await {
+                                            if let Ok(round) = Round::try_from_bytes(&round) {
+                                                round.clone()
+                                            } else {
+                                                tracing::error!("Failed to parse Round account");
+                                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                                continue;
+                                            }
+                                        } else {
+                                            tracing::error!("Failed to load round account data");
+                                            tokio::time::sleep(Duration::from_secs(1)).await;
+                                            continue
+                                        };
+
+                                        round.slot_hash = s_hash;
+
+                                        if let Some(r) = round.rng() {
+                                            let wsquare = round.winning_square(r);
+                                            tracing::info!("WINNING SQUARE: {}", wsquare);
+                                            if let Err(_) = app_state.live_data_broadcaster.send(crate::app_state::LiveBroadcastData::WinningSquare(
+                                                AppWinningSquare {
+                                                    round_id: round.id,
+                                                    winning_square: wsquare,
+                                                }
+                                            )) {
+                                                tracing::error!("Failed to broadcast live round data");
+                                            }
+                                            emitted_winning_square = true;
+                                        }
+                                    } else {
+                                        println!("\nFailed to get slothash\n");
+                                        tokio::time::sleep(Duration::from_secs(1)).await;
+                                        continue;
+                                    };
+                                },
+                                Err(_e) => {
+                                    println!("Failed to get slothash for slot {}", board.end_slot);
+                                    tokio::time::sleep(Duration::from_secs(1)).await;
+                                    continue;
+                                }
+                            }
+                        }
+                    } else {
+                        tracing::error!("Failed to get entropy seed api data");
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
             } else if slots_left_in_round > 0 {
                 board_snapshot = false;
+                emitted_winning_square = false;
                 tracing::info!("Checking miner snapshot status: {}", miners_snapshot.completed);
                 if !miners_snapshot.completed {
                     let r_now = Instant::now();

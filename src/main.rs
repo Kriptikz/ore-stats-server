@@ -32,6 +32,7 @@ pub const ROUND_ADDRESS: Pubkey =
 pub mod app_state;
 pub mod rpc;
 pub mod database;
+pub mod entropy_api;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
