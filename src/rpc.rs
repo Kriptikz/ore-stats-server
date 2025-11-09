@@ -115,38 +115,6 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         continue
                     };
 
-
-                    let mut possible_round = round.clone();
-                    match connection.get_account_data(&Pubkey::from_str("SysvarS1otHashes111111111111111111111111111").unwrap()).await {
-                        Ok(data) => {
-                            let slot_hashes =
-                                bincode::deserialize::<SlotHashes>(&data).unwrap();
-                            if let Some(slot_hash) = slot_hashes.get(&board.end_slot) {
-                                possible_round.slot_hash = slot_hash.to_bytes();
-                            } else {
-                                // If reset is not called within ~2.5 minutes of the block ending,
-                                // then the slot hash will be unavailable and secure hashes cannot be generated.
-                                println!("\nFailed to get slothash\n");
-                            };
-                        },
-                        Err(_e) => {
-                            println!("Failed to get slothash for slot {}", board.end_slot);
-                        }
-                    }
-                    if let Some(r) = possible_round.rng() {
-                        let winning_square = possible_round.winning_square(r);
-                        let wsd = AppWinningSquare {
-                            round_id: possible_round.id,
-                            winning_square,
-                        };
-                        if let Err(_) = app_state.live_data_broadcaster.send(crate::app_state::LiveBroadcastData::WinningSquare(wsd)) {
-                            tracing::error!("Failed to broadcast winning square data");
-                        }
-                    }
-
-
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-
                     let mut miners: Vec<AppMiner> = vec![];
                     if let Ok(miners_data_raw) = connection.get_program_accounts_with_config(
                         &ore_api::id(),
