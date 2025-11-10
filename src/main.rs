@@ -55,30 +55,15 @@ async fn main() -> anyhow::Result<()> {
         .pragma("cache_size", "-200000") // Set cache to ~200MB (200,000KB)
         .pragma("temp_store", "memory") // Store temporary data in memory
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
-        .busy_timeout(Duration::from_secs(15))
+        .busy_timeout(Duration::from_secs(40))
         .foreign_keys(true);
 
     let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
         .min_connections(2)
         .max_connections(10)
-        .acquire_timeout(Duration::from_secs(10))
+        .acquire_timeout(Duration::from_secs(35))
         .connect_with(db_connect_ops)
         .await?;
-
-    let process_db_2 = match env::var("PROCESS_DB_2").unwrap_or_else(|_| "false".to_string()).as_str() {
-        "true" => true,
-        "false" => false,
-        _ => false,
-    };
-
-    if process_db_2 {
-        let db_2_url = env::var("DATABASE_2_URL").unwrap_or_else(|_| "data2/app.db".to_string());
-        if let Some(parent) = std::path::Path::new(&db_2_url).parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-
-        process_secondary_database(db_2_url).await;
-    };
 
     tracing::info!("Running optimize...");
     sqlx::query("PRAGMA optimize").execute(&db_pool).await?;
