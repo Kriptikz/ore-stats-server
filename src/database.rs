@@ -1,6 +1,8 @@
+use std::{str::FromStr, time::Duration};
+
 use ore_api::state::{Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
-use sqlx::{prelude::FromRow, Pool, Sqlite};
+use sqlx::{prelude::FromRow, sqlite::SqliteConnectOptions, Pool, Sqlite};
 
 use crate::{app_state::AppMiner};
 
@@ -975,3 +977,53 @@ pub async fn get_ore_leaderboard_last_n_rounds_v2(
     Ok(rows)
 }
 
+
+pub async fn process_secondary_database(db_url: String) {
+    tokio::spawn(async move {
+        tracing::info!("connecting to db_2");
+        let db_2_pool = get_db_2_pool(db_url.to_string()).await;
+        if let None = db_2_pool {
+            tracing::info!("failed to established connection to db_2");
+        }
+        tracing::info!("successfully established connection to db_2");
+        tracing::info!("Running migrations for db_2");
+        if let Some(db_2_pool) = db_2_pool {
+            match sqlx::migrate!("./migrations").run(&db_2_pool).await {
+                Ok(_) => {
+                    tracing::info!("Successfully ran migrations for db_2");
+                },
+                Err(e) => {
+                    tracing::info!("Error running migrations for db_2.\nE: {:?}", e);
+                },
+            }
+        }
+        
+    });
+}
+
+async fn get_db_2_pool(db_url: String) -> Option<Pool<Sqlite>> {
+    let db_2_connect_ops = match SqliteConnectOptions::from_str(&db_url) {
+        Ok(d) => {
+            d.create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .pragma("cache_size", "-200000") // Set cache to ~200MB (200,000KB)
+            .pragma("temp_store", "memory") // Store temporary data in memory
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(15))
+            .foreign_keys(true)
+        },
+        Err(e) => {
+            return None
+        }
+    };
+
+    match sqlx::sqlite::SqlitePoolOptions::new()
+        .min_connections(2)
+        .max_connections(10)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(db_2_connect_ops)
+        .await {
+            Ok(s) => {return Some(s)}
+            Err(e) => {return None}
+        }
+}

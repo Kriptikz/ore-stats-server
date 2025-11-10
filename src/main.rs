@@ -1,7 +1,7 @@
 use std::{collections::HashMap, convert::Infallible, env, str::FromStr, sync::Arc, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use anyhow::{anyhow, bail};
-use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{sqlite::SqliteConnectOptions, Pool, Sqlite};
 use thiserror::Error;
 use axum::{body::Body, extract::{Path, Query, State}, http::{Request, Response, StatusCode}, middleware::{self, Next}, response::{sse, Sse}, routing::get, Json, Router};
 use const_crypto::ed25519;
@@ -15,7 +15,7 @@ use tokio::{signal, sync::{broadcast, RwLock}};
 use tokio_stream::Stream;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury, LiveBroadcastData}, database::{get_deployments_by_round, DbMinerSnapshot, DbTreasury, GetDeployment, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
+use crate::{app_state::{AppBoard, AppLiveDeployment, AppMiner, AppRound, AppState, AppTreasury, LiveBroadcastData}, database::{get_deployments_by_round, process_secondary_database, DbMinerSnapshot, DbTreasury, GetDeployment, MinerLeaderboardRow, MinerOreLeaderboardRow, MinerTotalsRow, RoundRow}, rpc::{infer_refined_ore, update_data_system, watch_live_board}};
 
 /// Program id for const pda derivations
 const PROGRAM_ID: [u8; 32] = unsafe { *(&ore_api::id() as *const Pubkey as *const [u8; 32]) };
@@ -44,11 +44,9 @@ async fn main() -> anyhow::Result<()> {
         .with(env_filter)
         .init();
 
-    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data/app.db".to_string());
-    if let Some(path) = db_url.strip_prefix("sqlite://") {
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "data/app.db".to_string());
+    if let Some(parent) = std::path::Path::new(&db_url).parent() {
+        std::fs::create_dir_all(parent).ok();
     }
 
     let db_connect_ops = SqliteConnectOptions::from_str(&db_url)?
@@ -67,6 +65,20 @@ async fn main() -> anyhow::Result<()> {
         .connect_with(db_connect_ops)
         .await?;
 
+    let process_db_2 = match env::var("PROCESS_DB_2").unwrap_or_else(|_| "false".to_string()).as_str() {
+        "true" => true,
+        "false" => false,
+        _ => false,
+    };
+
+    if process_db_2 {
+        let db_2_url = env::var("DATABASE_2_URL").unwrap_or_else(|_| "data2/app.db".to_string());
+        if let Some(parent) = std::path::Path::new(&db_2_url).parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+
+        process_secondary_database(db_2_url).await;
+    };
 
     tracing::info!("Running optimize...");
     sqlx::query("PRAGMA optimize").execute(&db_pool).await?;
@@ -785,3 +797,4 @@ async fn shutdown_signal() {
 
     tracing::info!("shutting down");
 }
+
