@@ -175,6 +175,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/deployments", get(get_deployments_old))
         .route("/v2/deployments", get(get_deployments))
         .route("/rounds", get(get_rounds))
+        .route("/v2/rounds", get(v2_get_rounds))
         .route("/treasuries", get(get_treasuries))
         .route("/search/pubkey/{letters}", get(get_available_pubkeys))
         .route("/miner/latest/{pubkey}", get(get_miner_latest))
@@ -343,6 +344,22 @@ async fn get_rounds(
     let limit = p.limit.unwrap_or(100).max(1).min(2000);
     let offset = p.offset.unwrap_or(0).max(0);
     let rounds = database::get_rounds(&state.db_pool, limit, offset, p.ml).await?;
+    Ok(Json(rounds))
+}
+
+#[derive(Debug, Deserialize)]
+struct V2RoundsPagination {
+    limit: Option<i64>,
+    round_id: i64,
+    ml: Option<bool>
+}
+
+async fn v2_get_rounds(
+    State(state): State<AppState>,
+    Query(p): Query<V2RoundsPagination>,
+) -> Result<Json<Vec<RoundRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).max(1).min(2000);
+    let rounds = database::get_rounds_via_cursor(&state.db_pool, limit, p.round_id, p.ml).await?;
     Ok(Json(rounds))
 }
 

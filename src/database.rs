@@ -262,6 +262,43 @@ pub async fn get_rounds(pool: &Pool<Sqlite>, limit: i64, offset: i64, ml: Option
     Ok(rounds)
 }
 
+pub async fn get_rounds_via_cursor(pool: &Pool<Sqlite>, limit: i64, cursor: i64, ml: Option<bool>) -> Result<Vec<RoundRow>, sqlx::Error> {
+    if let Some(ml) = ml {
+        if ml {
+            let rounds = sqlx::query_as::<_, RoundRow>(
+                r#"
+                SELECT * FROM rounds
+                WHERE motherlode > 0
+                AND id < ?
+                ORDER BY id DESC
+                LIMIT ?
+                "#
+            )
+            .bind(cursor)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?;
+
+            return Ok(rounds)
+        }
+    }
+
+    let rounds = sqlx::query_as::<_, RoundRow>(
+        r#"
+        SELECT * FROM rounds
+        WHERE id < ?
+        ORDER BY id DESC
+        LIMIT ?
+        "#
+    )
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rounds)
+}
+
 pub async fn get_miner_rounds(pool: &Pool<Sqlite>, pubkey: String, limit: i64, offset: i64) -> Result<Vec<RoundRow>, sqlx::Error> {
     let rounds = sqlx::query_as::<_, RoundRow>(
         r#"
