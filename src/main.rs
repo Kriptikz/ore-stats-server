@@ -182,6 +182,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/miner/snapshot/{pubkey}", get(get_miner_snapshot))
         .route("/miner/{pubkey}", get(get_miner_history))
         .route("/miner/rounds/{pubkey}", get(get_miner_rounds))
+        .route("/v2/miner/rounds/{pubkey}", get(get_miner_rounds_v2))
         .route("/miner/stats/{pubkey}", get(get_miner_stats))
         .route("/miner/totals", get(get_miner_totals))
         .route("/miner/totals/ore", get(get_miner_totals_ore))
@@ -350,7 +351,7 @@ async fn get_rounds(
 #[derive(Debug, Deserialize)]
 struct V2RoundsPagination {
     limit: Option<i64>,
-    round_id: i64,
+    round_id: Option<i64>,
     ml: Option<bool>
 }
 
@@ -359,8 +360,13 @@ async fn v2_get_rounds(
     Query(p): Query<V2RoundsPagination>,
 ) -> Result<Json<Vec<RoundRow>>, AppError> {
     let limit = p.limit.unwrap_or(100).max(1).min(2000);
-    let rounds = database::get_rounds_via_cursor(&state.db_pool, limit, p.round_id, p.ml).await?;
-    Ok(Json(rounds))
+    if let Some(rid) = p.round_id {
+        let rounds = database::get_rounds_via_cursor(&state.db_pool, limit, rid, p.ml).await?;
+        Ok(Json(rounds))
+    } else {
+        let rounds = database::get_rounds(&state.db_pool, limit, 0, p.ml).await?;
+        Ok(Json(rounds))
+    }
 }
 
 async fn get_treasuries(
@@ -393,6 +399,21 @@ async fn get_miner_rounds(
     let offset = p.offset.unwrap_or(0).max(0);
     let rounds = database::get_miner_rounds(&state.db_pool, pubkey, limit, offset).await?;
     Ok(Json(rounds))
+}
+
+async fn get_miner_rounds_v2(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(p): Query<V2RoundsPagination>,
+) -> Result<Json<Vec<RoundRow>>, AppError> {
+    let limit = p.limit.unwrap_or(100).max(1).min(100);
+    if let Some(rid) = p.round_id {
+        let rounds = database::get_miner_rounds_via_cursor(&state.db_pool, pubkey, limit, rid).await?;
+        Ok(Json(rounds))
+    } else {
+        let rounds = database::get_miner_rounds(&state.db_pool, pubkey, limit, 0).await?;
+        Ok(Json(rounds))
+    }
 }
 
 #[derive(Debug, Deserialize)]

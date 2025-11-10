@@ -321,6 +321,29 @@ pub async fn get_miner_rounds(pool: &Pool<Sqlite>, pubkey: String, limit: i64, o
     Ok(rounds)
 }
 
+pub async fn get_miner_rounds_via_cursor(pool: &Pool<Sqlite>, pubkey: String, limit: i64, cursor: i64) -> Result<Vec<RoundRow>, sqlx::Error> {
+    let rounds = sqlx::query_as::<_, RoundRow>(
+        r#"
+        SELECT * FROM rounds r
+        WHERE EXISTS (
+          SELECT 1 FROM deployments d
+          WHERE d.round_id = r.id
+            AND d.pubkey   = ?
+        )
+        AND r.id < ?
+        ORDER BY r.id DESC
+        LIMIT ?
+        "#
+    )
+    .bind(pubkey)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rounds)
+}
+
 pub async fn insert_deployment(pool: &Pool<Sqlite>, d: &CreateDeployment) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
