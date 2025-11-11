@@ -762,6 +762,11 @@ async fn sse_deployments_handler(
                         yield Ok(sse::Event::default().data(msg));
                     }
                 },
+                LiveBroadcastData::WinningSquare(_) => {
+                    if let Ok(msg) = serde_json::to_string(&msg) {
+                        yield Ok(sse::Event::default().data(msg));
+                    }
+                },
                 _ => {}
             }
         }
