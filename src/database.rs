@@ -2,7 +2,7 @@ use std::{str::FromStr, time::Duration};
 
 use ore_api::state::{Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
-use sqlx::{prelude::FromRow, sqlite::SqliteConnectOptions, Pool, Sqlite};
+use sqlx::{prelude::FromRow, sqlite::SqliteConnectOptions, Pool, QueryBuilder, Sqlite};
 
 use crate::{app_state::AppMiner};
 
@@ -373,32 +373,39 @@ pub async fn insert_deployment(pool: &Pool<Sqlite>, d: &CreateDeployment) -> Res
 }
 
 
-pub async fn insert_deployments(pool: &Pool<Sqlite>, rows: &[CreateDeployment]) -> Result<(), sqlx::Error> {
+pub async fn insert_deployments(
+    pool: &Pool<Sqlite>,
+    rows: &[CreateDeployment],
+) -> Result<(), sqlx::Error> {
+    const CHUNK_SIZE: usize = 100;
+
     let mut tx = pool.begin().await?;
 
-    for d in rows {
-        sqlx::query(
-            r#"
-            INSERT INTO deployments (
+    for chunk in rows.chunks(CHUNK_SIZE) {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "INSERT INTO deployments (
                 round_id, pubkey, square_id, amount, sol_earned, ore_earned, unclaimed_ore, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-            "#
-        )
-        .bind(d.round_id)
-        .bind(&d.pubkey)
-        .bind(d.square_id)
-        .bind(d.amount)
-        .bind(d.sol_earned)
-        .bind(d.ore_earned)
-        .bind(d.unclaimed_ore)
-        .bind(&d.created_at)
-        .execute(&mut *tx)
-        .await?;
+            ) ",
+        );
+
+        qb.push_values(chunk, |mut b, d| {
+            b.push_bind(d.round_id)
+                .push_bind(&d.pubkey)
+                .push_bind(d.square_id)
+                .push_bind(d.amount)
+                .push_bind(d.sol_earned)
+                .push_bind(d.ore_earned)
+                .push_bind(d.unclaimed_ore)
+                .push_bind(&d.created_at);
+        });
+
+        qb.build().execute(&mut *tx).await?;
     }
 
     tx.commit().await?;
     Ok(())
 }
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct GetDeployment {
