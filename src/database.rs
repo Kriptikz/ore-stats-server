@@ -438,31 +438,40 @@ pub async fn get_deployments_by_round(
     Ok(deployments)
 }
 
-pub async fn insert_miner_snapshots(pool: &Pool<Sqlite>, rows: &[CreateMinerSnapshot]) -> Result<(), sqlx::Error> {
-    tracing::info!("Inserting snapshots");
+pub async fn insert_miner_snapshots(
+    pool: &Pool<Sqlite>,
+    rows: &[CreateMinerSnapshot],
+) -> Result<(), sqlx::Error> {
+    tracing::info!("Inserting snapshots ({} rows)", rows.len());
+    const CHUNK_SIZE: usize = 150;
+
     let mut tx = pool.begin().await?;
 
-    for d in rows {
-        sqlx::query(
+    for chunk in rows.chunks(CHUNK_SIZE) {
+        let mut qb = QueryBuilder::<Sqlite>::new(
             r#"
             INSERT INTO miner_snapshots (
                 pubkey, unclaimed_ore, refined_ore, lifetime_sol, lifetime_ore, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?);
-            "#
-        )
-        .bind(&d.pubkey)
-        .bind(d.unclaimed_ore)
-        .bind(d.refined_ore)
-        .bind(d.lifetime_sol)
-        .bind(d.lifetime_ore)
-        .bind(&d.created_at)
-        .execute(&mut *tx)
-        .await?;
+            )
+            "#,
+        );
+
+        qb.push_values(chunk, |mut b, d| {
+            b.push_bind(&d.pubkey)
+                .push_bind(d.unclaimed_ore)
+                .push_bind(d.refined_ore)
+                .push_bind(d.lifetime_sol)
+                .push_bind(d.lifetime_ore)
+                .push_bind(&d.created_at);
+        });
+
+        qb.build().execute(&mut *tx).await?;
     }
 
     tx.commit().await?;
     Ok(())
 }
+
 
 pub async fn get_miner_snapshots(
     pool: &Pool<Sqlite>,
