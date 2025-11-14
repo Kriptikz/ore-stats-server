@@ -55,13 +55,12 @@ async fn main() -> anyhow::Result<()> {
         .pragma("cache_size", "-200000") // Set cache to ~200MB (200,000KB)
         .pragma("temp_store", "memory") // Store temporary data in memory
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
-        .busy_timeout(Duration::from_secs(40))
+        .busy_timeout(Duration::from_secs(400))
         .foreign_keys(true);
 
     let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .min_connections(2)
-        .max_connections(10)
-        .acquire_timeout(Duration::from_secs(35))
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(1000))
         .connect_with(db_connect_ops)
         .await?;
 

@@ -410,10 +410,11 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                                 }
 
                             }
-
+                            let n = Instant::now();
                             if let Err(e) = insert_deployments(&db_pool, &deployments).await {
                                 tracing::error!("Failed to insert deployments: {:?}", e);
                             }
+                            tracing::info!("Inserted deployments in {} ms", n.elapsed().as_millis());
 
 
                         } else {
@@ -458,9 +459,11 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
                         }
 
 
+                        let n = Instant::now();
                         if let Err(e) = database::finalize_round_idempotent(&db_pool, round.id as i64).await {
                             tracing::error!("Failed to finalize for round: {:?}", e);
                         }
+                        tracing::info!("Finalized data in {} ms", n.elapsed().as_millis());
 
                         tracing::info!("Successfully snapshot round and updated database in {}ms", r_now.elapsed().as_millis());
                         miners_snapshot.completed = true;
