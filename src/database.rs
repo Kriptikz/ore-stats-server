@@ -3,6 +3,7 @@ use std::{str::FromStr, time::Duration};
 use ore_api::state::{Miner, Round, Treasury};
 use serde::{Deserialize, Serialize};
 use sqlx::{prelude::FromRow, sqlite::SqliteConnectOptions, Pool, QueryBuilder, Sqlite};
+use tokio::time::Instant;
 
 use crate::{app_state::AppMiner};
 
@@ -442,6 +443,7 @@ pub async fn insert_miner_snapshots(
     pool: &Pool<Sqlite>,
     rows: &[CreateMinerSnapshot],
 ) -> Result<(), sqlx::Error> {
+    let n = Instant::now();
     tracing::info!("Inserting snapshots ({} rows)", rows.len());
     const CHUNK_SIZE: usize = 150;
 
@@ -469,6 +471,7 @@ pub async fn insert_miner_snapshots(
     }
 
     tx.commit().await?;
+    tracing::info!("Inserted snapshots in: {} ms", n.elapsed().as_millis());
     Ok(())
 }
 
