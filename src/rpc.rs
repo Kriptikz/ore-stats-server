@@ -443,10 +443,13 @@ pub async fn update_data_system(connection: RpcClient, app_state: AppState) {
 
 
                         // update round
+                        let n = Instant::now();
+                        tracing::info!("\n----------------\nUpdating round.");
                         let r = app_state.rounds.clone();
                         let mut l = r.write().await;
                         l.push(round.into());
                         drop(l);
+                        tracing::info!("Updated round in {} ms", n.elapsed().as_millis());
 
                         // insert round
                         if let Err(e) = insert_round(&db_pool, &RoundRow::from(round)).await {
